@@ -1,0 +1,9 @@
+# This file configures static analysis for the omnydrive package.
+#
+# It enables the 'recommended' set of lints from `package:lints`, the idiomatic
+# baseline used by pub.dev's package scoring.
+
+include: package:lints/recommended.yaml
+
+# For more information about the core and recommended set of lints, see
+# https://dart.dev/go/core-lints
