@@ -13,3 +13,5 @@ Initial release.
 - `omnydrive` CLI: `serve`, `serve-content`, `login`, `publish`, `clone`,
   `sync`, `mounts`, `drives`, with file-backed per-endpoint state.
 - In-memory and file-backed persistence implementations.
+- Runnable examples: core round-trip, conflict detection & resolution,
+  read-only mirror, client SDK, and a git drive walkthrough.
