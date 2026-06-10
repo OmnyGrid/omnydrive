@@ -106,10 +106,12 @@ class DirectorySynchronizer implements Synchronizer {
       if (conflict != null) throw ConflictDetectedException(conflict);
 
       final diff = _differ.diff(originManifest, localManifest);
+      final total = diff.allPaths.length;
+      var done = 0;
       progress?.report(
         ProgressEvent(
           phase: ProgressPhase.transferring,
-          total: diff.allPaths.length,
+          total: total,
           completed: 0,
         ),
       );
@@ -117,18 +119,40 @@ class DirectorySynchronizer implements Synchronizer {
         final data = await local.readBytes(path);
         await origin.writeBytes(path, data);
         bytes += data.length;
+        done++;
+        progress?.report(
+          ProgressEvent(
+            phase: ProgressPhase.transferring,
+            total: total,
+            completed: done,
+            bytes: bytes,
+            message: path,
+          ),
+        );
       }
       for (final path in diff.removed) {
         await origin.delete(path);
+        done++;
+        progress?.report(
+          ProgressEvent(
+            phase: ProgressPhase.transferring,
+            total: total,
+            completed: done,
+            bytes: bytes,
+            message: path,
+          ),
+        );
       }
       applied = diff.allPaths.length;
       newRef = (await origin.manifest()).hash();
     } else {
       final diff = _differ.diff(localManifest, originManifest);
+      final total = diff.allPaths.length;
+      var done = 0;
       progress?.report(
         ProgressEvent(
           phase: ProgressPhase.transferring,
-          total: diff.allPaths.length,
+          total: total,
           completed: 0,
         ),
       );
@@ -136,9 +160,29 @@ class DirectorySynchronizer implements Synchronizer {
         final data = await origin.readBytes(path);
         await local.writeBytes(path, data);
         bytes += data.length;
+        done++;
+        progress?.report(
+          ProgressEvent(
+            phase: ProgressPhase.transferring,
+            total: total,
+            completed: done,
+            bytes: bytes,
+            message: path,
+          ),
+        );
       }
       for (final path in diff.removed) {
         await local.delete(path);
+        done++;
+        progress?.report(
+          ProgressEvent(
+            phase: ProgressPhase.transferring,
+            total: total,
+            completed: done,
+            bytes: bytes,
+            message: path,
+          ),
+        );
       }
       applied = diff.allPaths.length;
       newRef = (await local.manifest()).hash();

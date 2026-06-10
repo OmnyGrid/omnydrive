@@ -1,3 +1,11 @@
+## 1.1.0
+
+- Added: per-file progress events during directory sync. `DirectorySynchronizer.apply`
+  now emits a `transferring` `ProgressEvent` after each file is written or deleted (in
+  both push and pull directions), carrying the path (`message`), cumulative `bytes`, and
+  `completed`/`total` counts — enabling consumers to render live progress. Backward
+  compatible: the start and `done` events are unchanged and `progress` stays optional.
+
 ## 1.0.0
 
 First stable release. Promotes the complete vertical slice — directory and git

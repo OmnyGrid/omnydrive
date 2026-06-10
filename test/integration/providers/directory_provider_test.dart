@@ -146,6 +146,120 @@ void main() {
     );
   });
 
+  test('push emits a per-file progress event for every change', () async {
+    final drive = await provider.describe(
+      originUri(),
+      accessMode: AccessMode.readWrite,
+    );
+    final dest = LocalPath(p.join(work.path, 'mirror'));
+    await provider.materialize(
+      drive: drive,
+      dest: dest,
+      mountType: MountType.mirror,
+    );
+    final baseline = await provider.currentRef(originUri());
+
+    // One added, one modified, one removed → 3 changed paths.
+    await File(p.join(dest.value, 'added.txt')).writeAsString('new');
+    await File(p.join(dest.value, 'readme.md')).writeAsString('edited');
+    await File(p.join(dest.value, 'src/main.dart')).delete();
+
+    final sync = provider.synchronizer(drive);
+    final mount = MountInfo(
+      id: MountId('m1'),
+      driveId: drive.id,
+      localPath: dest,
+      accessMode: AccessMode.readWrite,
+      mountType: MountType.mirror,
+      mountedAt: DateTime.utc(2026),
+      syncState: SyncState(baselineRef: baseline),
+    );
+    final plan = await sync.plan(
+      mount: mount,
+      baseline: baseline,
+      direction: SyncDirection.push,
+    );
+
+    final events = <ProgressEvent>[];
+    await sync.apply(
+      mount: mount,
+      plan: plan,
+      baseline: baseline,
+      progress: ProgressReporter((e) => events.add(e)),
+    );
+
+    final perFile = events
+        .where(
+          (e) => e.phase == ProgressPhase.transferring && e.message.isNotEmpty,
+        )
+        .toList();
+    expect(perFile, hasLength(3));
+    expect(
+      perFile.map((e) => e.completed).toList(),
+      [1, 2, 3],
+      reason: 'completed should increase by one per file',
+    );
+    expect(perFile.last.completed, perFile.last.total);
+    expect(events.last.phase, ProgressPhase.done);
+  });
+
+  test('pull emits a per-file progress event for every change', () async {
+    final drive = await provider.describe(
+      originUri(),
+      accessMode: AccessMode.readWrite,
+    );
+    final dest = LocalPath(p.join(work.path, 'mirror'));
+    await provider.materialize(
+      drive: drive,
+      dest: dest,
+      mountType: MountType.mirror,
+    );
+    final baseline = await provider.currentRef(originUri());
+
+    // One added, one modified, one removed on the origin → 3 changed paths.
+    await origin.writeFile('added.txt', 'new');
+    await origin.writeFile('readme.md', 'edited');
+    await File(p.join(origin.path, 'src/main.dart')).delete();
+
+    final sync = provider.synchronizer(drive);
+    final mount = MountInfo(
+      id: MountId('m1'),
+      driveId: drive.id,
+      localPath: dest,
+      accessMode: AccessMode.readWrite,
+      mountType: MountType.mirror,
+      mountedAt: DateTime.utc(2026),
+      syncState: SyncState(baselineRef: baseline),
+    );
+    final plan = await sync.plan(
+      mount: mount,
+      baseline: baseline,
+      direction: SyncDirection.pull,
+    );
+
+    final events = <ProgressEvent>[];
+    await sync.apply(
+      mount: mount,
+      plan: plan,
+      baseline: baseline,
+      progress: ProgressReporter((e) => events.add(e)),
+    );
+
+    final perFile = events
+        .where(
+          (e) => e.phase == ProgressPhase.transferring && e.message.isNotEmpty,
+        )
+        .toList();
+    expect(perFile, hasLength(3));
+    expect(
+      perFile.map((e) => e.completed).toList(),
+      [1, 2, 3],
+      reason: 'completed should increase by one per file',
+    );
+    expect(perFile.last.completed, perFile.last.total);
+    expect(events.last.phase, ProgressPhase.done);
+  });
+
   test('pull brings origin changes into the local mirror', () async {
     final drive = await provider.describe(
       originUri(),
