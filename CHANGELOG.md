@@ -1,3 +1,18 @@
+## 1.1.1
+
+- `ManifestBuilder`:
+  - Updated default `ignoredDirs` to include `.dart_tool` directory.
+  - Documentation updated to reflect the addition of `.dart_tool` to ignored directories.
+
+- Dependency updates:
+  - `args`: ^2.5.0 → ^2.7.0
+  - `crypto`: ^3.0.3 → ^3.0.7
+  - `http`: ^1.2.0 → ^1.6.0
+  - `path`: ^1.9.0 → ^1.9.1
+  - `shelf`: ^1.4.1 → ^1.4.2
+  - `lints`: ^6.0.0 → ^6.1.0
+  - `test`: ^1.25.6 → ^1.31.1
+
 ## 1.1.0
 
 - Added: per-file progress events during directory sync. `DirectorySynchronizer.apply`

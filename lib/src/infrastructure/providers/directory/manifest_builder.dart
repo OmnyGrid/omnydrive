@@ -9,14 +9,16 @@ import '../../../domain/value_objects/content_hash.dart';
 
 /// Walks a directory tree and produces a content-addressed [FileManifest].
 ///
-/// Internal directories (`.omnydrive`, `.git`) are skipped by default so the
-/// drive's own metadata and any embedded git repository don't pollute the
-/// manifest.
+/// Internal directories (`.omnydrive`, `.git`, `.dart_tool`) are skipped by
+/// default so the drive's own metadata and any embedded git repository don't
+/// pollute the manifest.
 class ManifestBuilder {
   /// Directory names skipped during the walk.
   final Set<String> ignoredDirs;
 
-  const ManifestBuilder({this.ignoredDirs = const {'.omnydrive', '.git'}});
+  const ManifestBuilder({
+    this.ignoredDirs = const {'.omnydrive', '.git', '.dart_tool'},
+  });
 
   /// Builds the manifest for the tree rooted at [rootPath]. Returns an empty
   /// manifest when the directory does not exist.

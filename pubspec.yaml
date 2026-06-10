@@ -3,24 +3,24 @@ description: >-
   Distributed file & git drive synchronization in pure Dart. Publish, mount,
   clone and sync directory and git drives across endpoints coordinated by a
   hub, with explicit conflict detection and an official Dart client SDK.
-version: 1.1.0
+version: 1.1.1
 repository: https://github.com/OmnyGrid/omnydrive
 
 environment:
   sdk: ^3.10.9
 
 dependencies:
-  args: ^2.5.0
-  crypto: ^3.0.3
-  http: ^1.2.0
-  path: ^1.9.0
-  shelf: ^1.4.1
+  args: ^2.7.0
+  crypto: ^3.0.7
+  http: ^1.6.0
+  path: ^1.9.1
+  shelf: ^1.4.2
   shelf_router: ^1.1.4
 
 dev_dependencies:
   dependency_validator: ^5.0.5
-  lints: ^6.0.0
-  test: ^1.25.6
+  lints: ^6.1.0
+  test: ^1.31.1
 
 executables:
   omnydrive: omnydrive
