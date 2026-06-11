@@ -172,6 +172,57 @@ void main() {
     expect(File('$dest/y.txt').readAsStringSync(), 'new');
   });
 
+  test('deleting a mirror file pushes the deletion over HTTP', () async {
+    final src = await TempDir.create();
+    addTearDown(src.cleanup);
+    await src.writeFile('a.txt', 'A');
+    await src.writeFile('b.txt', 'B');
+    final drive = await publisher.publishDirectory(
+      path: src.path,
+      name: 'docs',
+    );
+
+    final dst = await TempDir.create();
+    addTearDown(dst.cleanup);
+    final dest = dst.resolve('mirror');
+    final mount = await cloner.cloneDrive(driveId: drive.id.value, dest: dest);
+
+    await File('$dest/a.txt').delete();
+
+    final result = await cloner.syncMount(mount.id.value);
+    expect(result.status, SyncStatus.clean);
+    // The content server's DELETE route removed it from the origin.
+    expect(File('${src.path}/a.txt').existsSync(), isFalse);
+    expect(File('${src.path}/b.txt').readAsStringSync(), 'B');
+  });
+
+  test('an origin deletion is pulled into the mirror over HTTP', () async {
+    final src = await TempDir.create();
+    addTearDown(src.cleanup);
+    await src.writeFile('a.txt', 'A');
+    await src.writeFile('b.txt', 'B');
+    final drive = await publisher.publishDirectory(
+      path: src.path,
+      name: 'docs',
+    );
+
+    final dst = await TempDir.create();
+    addTearDown(dst.cleanup);
+    final dest = dst.resolve('mirror');
+    final mount = await cloner.cloneDrive(
+      driveId: drive.id.value,
+      dest: dest,
+      readOnly: true,
+    );
+
+    await File('${src.path}/a.txt').delete();
+
+    final result = await cloner.syncMount(mount.id.value);
+    expect(result.status, SyncStatus.clean);
+    expect(File('$dest/a.txt').existsSync(), isFalse);
+    expect(File('$dest/b.txt').readAsStringSync(), 'B');
+  });
+
   test('unauthenticated drive registration is rejected', () async {
     final anon = HttpDriveHub(hubUrl);
     final src = await TempDir.create();
