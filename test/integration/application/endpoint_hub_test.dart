@@ -185,6 +185,67 @@ void main() {
     );
   });
 
+  test(
+    'creating a new file in a read-write mirror pushes it to the origin',
+    () async {
+      final src = await TempDir.create();
+      addTearDown(src.cleanup);
+      await src.writeFile('a.txt', 'A');
+      final drive = await publisher.publishDirectory(path: src.path, name: 'd');
+
+      final dst = await TempDir.create();
+      addTearDown(dst.cleanup);
+      final dest = dst.resolve('mirror');
+      final mount = await cloner.cloneDrive(
+        driveId: drive.id.value,
+        dest: dest,
+      );
+
+      // A brand-new file appears only on the mirror side.
+      await File('$dest/f1.txt').writeAsString('fresh');
+
+      final result = await cloner.syncMount(mount.id.value);
+      expect(result.status, SyncStatus.clean);
+      // The new file is uploaded, not discarded, and survives on both sides.
+      expect(File('${src.path}/f1.txt').readAsStringSync(), 'fresh');
+      expect(File('$dest/f1.txt').readAsStringSync(), 'fresh');
+    },
+  );
+
+  test(
+    'a read-only mirror with local edits conflicts instead of deleting them',
+    () async {
+      final src = await TempDir.create();
+      addTearDown(src.cleanup);
+      await src.writeFile('a.txt', 'A');
+      final drive = await publisher.publishDirectory(
+        path: src.path,
+        name: 'ro',
+      );
+
+      final dst = await TempDir.create();
+      addTearDown(dst.cleanup);
+      final dest = dst.resolve('mirror');
+      final mount = await cloner.cloneDrive(
+        driveId: drive.id.value,
+        dest: dest,
+        readOnly: true,
+      );
+      expect(mount.accessMode, AccessMode.readOnly);
+
+      // A new file is created on the (read-only) mirror side.
+      await File('$dest/f1.txt').writeAsString('fresh');
+
+      // Syncing must refuse rather than silently delete the local-only file.
+      await expectLater(
+        () => cloner.syncMount(mount.id.value),
+        throwsA(isA<ConflictDetectedException>()),
+      );
+      expect(File('$dest/f1.txt').existsSync(), isTrue);
+      expect(File('$dest/f1.txt').readAsStringSync(), 'fresh');
+    },
+  );
+
   test('cloning an unknown drive throws NotFoundException', () async {
     final dst = await TempDir.create();
     addTearDown(dst.cleanup);
