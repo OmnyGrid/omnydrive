@@ -34,6 +34,40 @@ class ConflictDetector {
     );
   }
 
+  /// Returns a [Conflict] when a pull would be destructive, or null when it is
+  /// safe to apply the origin onto the local copy.
+  ///
+  /// A pull overwrites/deletes local files to match the origin. That is only
+  /// safe while the local copy still matches [baseline]; once it has diverged
+  /// ([local] != [baseline]) the pull would silently discard local work, so a
+  /// conflict is raised instead. When the origin also moved this is a genuine
+  /// two-sided divergence; otherwise the local copy simply cannot be published
+  /// (e.g. a read-only mount).
+  Conflict? detectForPull({
+    required DriveId driveId,
+    required SyncRef baseline,
+    required SyncRef local,
+    required SyncRef origin,
+  }) {
+    if (local == baseline) return null;
+    final originMoved = origin != baseline;
+    return Conflict(
+      kind: originMoved
+          ? ConflictKind.contentDivergence
+          : ConflictKind.localDivergence,
+      driveId: driveId,
+      expectedRef: baseline,
+      actualRef: local,
+      message: originMoved
+          ? 'Both the local copy (${local.value}) and the origin '
+                '(${origin.value}) changed since ${baseline.value}; resolve the '
+                'conflict before syncing.'
+          : 'The local copy changed to ${local.value} since ${baseline.value} '
+                'but the mount cannot publish it; refusing to discard local '
+                'changes by pulling.',
+    );
+  }
+
   /// Builds a protected-branch conflict for a git push that targeted a branch
   /// it must not write to directly.
   Conflict protectedBranch({

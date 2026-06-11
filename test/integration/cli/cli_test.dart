@@ -48,6 +48,47 @@ void main() {
   Future<int> cli(String state, List<String> args) =>
       runOmnydrive(['--state', state, ...args]);
 
+  // Logs in both endpoints, publishes a seeded directory and clones it,
+  // returning the origin dir, the mirror path and the persisted mount id.
+  Future<({TempDir src, String dest, String mountId})> setup(
+    Map<String, String> seed,
+  ) async {
+    await cli(stateA.path, [
+      'login',
+      '--hub',
+      hubUrl,
+      '--id',
+      'alpha',
+      '--serve-url',
+      contentUrl,
+    ]);
+    final src = await TempDir.create('omnydrive_cli_src_');
+    addTearDown(src.cleanup);
+    for (final entry in seed.entries) {
+      await src.writeFile(entry.key, entry.value);
+    }
+    await cli(stateA.path, ['publish', src.path, '--name', 'docs']);
+
+    await cli(stateB.path, [
+      'login',
+      '--hub',
+      hubUrl,
+      '--id',
+      'beta',
+      '--serve-url',
+      'http://beta.invalid',
+    ]);
+    final dst = await TempDir.create('omnydrive_cli_dst_');
+    addTearDown(dst.cleanup);
+    final dest = p.join(dst.path, 'm');
+    await cli(stateB.path, ['clone', 'alpha/docs', dest]);
+
+    final mounts = await FileMountRegistry(
+      p.join(stateB.path, 'mounts.json'),
+    ).findAll();
+    return (src: src, dest: dest, mountId: mounts.single.id.value);
+  }
+
   test('full publish / clone / sync round-trip via the CLI', () async {
     // Publisher logs in and publishes a directory.
     expect(
@@ -104,6 +145,34 @@ void main() {
       File(p.join(src.path, 'readme.md')).readAsStringSync(),
       'hello world',
     );
+  });
+
+  test('sync pulls origin changes via the CLI', () async {
+    final s = await setup({'readme.md': 'hello'});
+
+    // The origin moves after the clone; the mount is otherwise untouched.
+    await s.src.writeFile('readme.md', 'updated');
+    await s.src.writeFile('extra.txt', 'X');
+
+    expect(await cli(stateB.path, ['sync', s.mountId]), 0);
+    expect(File(p.join(s.dest, 'readme.md')).readAsStringSync(), 'updated');
+    expect(File(p.join(s.dest, 'extra.txt')).readAsStringSync(), 'X');
+  });
+
+  test('sync reports a conflict (exit 6) without losing data', () async {
+    final s = await setup({'f.txt': 'base'});
+
+    // Both sides diverge from the baseline.
+    await s.src.writeFile('f.txt', 'origin-change');
+    await File(p.join(s.dest, 'f.txt')).writeAsString('local-change');
+
+    expect(await cli(stateB.path, ['sync', s.mountId]), 6);
+    // Neither side is clobbered by the refused sync.
+    expect(
+      File(p.join(s.src.path, 'f.txt')).readAsStringSync(),
+      'origin-change',
+    );
+    expect(File(p.join(s.dest, 'f.txt')).readAsStringSync(), 'local-change');
   });
 
   test('commands without a login fail with exit code 1', () async {

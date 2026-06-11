@@ -27,6 +27,39 @@ void main() {
       expect(c.expectedRef, SyncRef.directory('a'));
       expect(c.actualRef, SyncRef.directory('b'));
     });
+
+    test('no pull conflict when the local copy still matches baseline', () {
+      final c = detector.detectForPull(
+        driveId: driveId,
+        baseline: SyncRef.directory('a'),
+        local: SyncRef.directory('a'),
+        origin: SyncRef.directory('b'),
+      );
+      expect(c, isNull);
+    });
+
+    test('localDivergence when only the local copy moved (cannot push)', () {
+      final c = detector.detectForPull(
+        driveId: driveId,
+        baseline: SyncRef.directory('a'),
+        local: SyncRef.directory('b'),
+        origin: SyncRef.directory('a'),
+      );
+      expect(c, isNotNull);
+      expect(c!.kind, ConflictKind.localDivergence);
+      expect(c.actualRef, SyncRef.directory('b'));
+    });
+
+    test('contentDivergence when both the local copy and origin moved', () {
+      final c = detector.detectForPull(
+        driveId: driveId,
+        baseline: SyncRef.directory('a'),
+        local: SyncRef.directory('b'),
+        origin: SyncRef.directory('c'),
+      );
+      expect(c, isNotNull);
+      expect(c!.kind, ConflictKind.contentDivergence);
+    });
   });
 
   group('ManifestDiffer', () {

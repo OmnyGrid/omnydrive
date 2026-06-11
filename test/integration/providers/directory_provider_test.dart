@@ -26,6 +26,54 @@ void main() {
 
   OriginUri originUri() => OriginUri(origin.path);
 
+  // --- Helpers to keep the change-type matrix DRY --------------------------
+
+  /// Materializes a read-write mirror of the origin and returns the pieces a
+  /// sync needs: the drive, the mirror path, and the baseline ref.
+  Future<({Drive drive, LocalPath dest, SyncRef baseline})>
+  materializeMirror() async {
+    final drive = await provider.describe(
+      originUri(),
+      accessMode: AccessMode.readWrite,
+    );
+    final dest = LocalPath(p.join(work.path, 'mirror'));
+    await provider.materialize(
+      drive: drive,
+      dest: dest,
+      mountType: MountType.mirror,
+    );
+    final baseline = await provider.currentRef(originUri());
+    return (drive: drive, dest: dest, baseline: baseline);
+  }
+
+  MountInfo mountAt(Drive drive, LocalPath dest, SyncRef baseline) => MountInfo(
+    id: MountId('m1'),
+    driveId: drive.id,
+    localPath: dest,
+    accessMode: AccessMode.readWrite,
+    mountType: MountType.mirror,
+    mountedAt: DateTime.utc(2026),
+    syncState: SyncState(baselineRef: baseline),
+  );
+
+  /// Plans and applies a sync in [direction] for a materialized [mirror].
+  Future<SyncResult> runSync(
+    ({Drive drive, LocalPath dest, SyncRef baseline}) mirror,
+    SyncDirection direction,
+  ) async {
+    final sync = provider.synchronizer(mirror.drive);
+    final mount = mountAt(mirror.drive, mirror.dest, mirror.baseline);
+    final plan = await sync.plan(
+      mount: mount,
+      baseline: mirror.baseline,
+      direction: direction,
+    );
+    return sync.apply(mount: mount, plan: plan, baseline: mirror.baseline);
+  }
+
+  String originFile(String rel) => p.join(origin.path, rel);
+  String destFile(LocalPath dest, String rel) => p.join(dest.value, rel);
+
   test('describe derives drive metadata from the directory', () async {
     final drive = await provider.describe(
       originUri(),
@@ -201,6 +249,11 @@ void main() {
     );
     expect(perFile.last.completed, perFile.last.total);
     expect(events.last.phase, ProgressPhase.done);
+
+    // The changes are actually propagated to the origin, not just reported.
+    expect(File(p.join(origin.path, 'added.txt')).readAsStringSync(), 'new');
+    expect(File(p.join(origin.path, 'readme.md')).readAsStringSync(), 'edited');
+    expect(File(p.join(origin.path, 'src/main.dart')).existsSync(), isFalse);
   });
 
   test('pull emits a per-file progress event for every change', () async {
@@ -258,6 +311,11 @@ void main() {
     );
     expect(perFile.last.completed, perFile.last.total);
     expect(events.last.phase, ProgressPhase.done);
+
+    // The changes actually land in the mirror, not just reported.
+    expect(File(p.join(dest.value, 'added.txt')).readAsStringSync(), 'new');
+    expect(File(p.join(dest.value, 'readme.md')).readAsStringSync(), 'edited');
+    expect(File(p.join(dest.value, 'src/main.dart')).existsSync(), isFalse);
   });
 
   test('pull brings origin changes into the local mirror', () async {
@@ -292,5 +350,94 @@ void main() {
     );
     await sync.apply(mount: mount, plan: plan, baseline: baseline);
     expect(File(p.join(dest.value, 'new.txt')).readAsStringSync(), 'fresh');
+  });
+
+  // Change-type matrix: each kind of change (add / modify / delete, top-level
+  // and nested) propagated through an explicit push and pull, asserting the
+  // actual file state on the target side.
+  group('push (local mirror → origin)', () {
+    test('adds a new file to the origin', () async {
+      final m = await materializeMirror();
+      await File(destFile(m.dest, 'added.txt')).writeAsString('new');
+      await runSync(m, SyncDirection.push);
+      expect(File(originFile('added.txt')).readAsStringSync(), 'new');
+    });
+
+    test('modifies an existing file on the origin', () async {
+      final m = await materializeMirror();
+      await File(destFile(m.dest, 'readme.md')).writeAsString('edited');
+      await runSync(m, SyncDirection.push);
+      expect(File(originFile('readme.md')).readAsStringSync(), 'edited');
+    });
+
+    test('deletes a removed file from the origin', () async {
+      final m = await materializeMirror();
+      await File(destFile(m.dest, 'readme.md')).delete();
+      await runSync(m, SyncDirection.push);
+      expect(File(originFile('readme.md')).existsSync(), isFalse);
+      // Untouched files are preserved.
+      expect(File(originFile('src/main.dart')).existsSync(), isTrue);
+    });
+
+    test('modifies a nested file on the origin', () async {
+      final m = await materializeMirror();
+      await File(
+        destFile(m.dest, 'src/main.dart'),
+      ).writeAsString('void m() {}');
+      await runSync(m, SyncDirection.push);
+      expect(
+        File(originFile('src/main.dart')).readAsStringSync(),
+        'void m() {}',
+      );
+    });
+
+    test('deletes a nested file from the origin', () async {
+      final m = await materializeMirror();
+      await File(destFile(m.dest, 'src/main.dart')).delete();
+      await runSync(m, SyncDirection.push);
+      expect(File(originFile('src/main.dart')).existsSync(), isFalse);
+    });
+  });
+
+  group('pull (origin → local mirror)', () {
+    test('adds a new origin file into the mirror', () async {
+      final m = await materializeMirror();
+      await origin.writeFile('added.txt', 'new');
+      await runSync(m, SyncDirection.pull);
+      expect(File(destFile(m.dest, 'added.txt')).readAsStringSync(), 'new');
+    });
+
+    test('modifies an existing file in the mirror', () async {
+      final m = await materializeMirror();
+      await origin.writeFile('readme.md', 'edited');
+      await runSync(m, SyncDirection.pull);
+      expect(File(destFile(m.dest, 'readme.md')).readAsStringSync(), 'edited');
+    });
+
+    test('deletes a removed origin file from the mirror', () async {
+      final m = await materializeMirror();
+      await File(originFile('readme.md')).delete();
+      await runSync(m, SyncDirection.pull);
+      expect(File(destFile(m.dest, 'readme.md')).existsSync(), isFalse);
+      // Untouched files are preserved.
+      expect(File(destFile(m.dest, 'src/main.dart')).existsSync(), isTrue);
+    });
+
+    test('modifies a nested file in the mirror', () async {
+      final m = await materializeMirror();
+      await origin.writeFile('src/main.dart', 'void m() {}');
+      await runSync(m, SyncDirection.pull);
+      expect(
+        File(destFile(m.dest, 'src/main.dart')).readAsStringSync(),
+        'void m() {}',
+      );
+    });
+
+    test('deletes a nested origin file from the mirror', () async {
+      final m = await materializeMirror();
+      await File(originFile('src/main.dart')).delete();
+      await runSync(m, SyncDirection.pull);
+      expect(File(destFile(m.dest, 'src/main.dart')).existsSync(), isFalse);
+    });
   });
 }

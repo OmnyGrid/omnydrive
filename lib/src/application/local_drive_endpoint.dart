@@ -14,6 +14,7 @@ import '../domain/repositories/drive_registry.dart';
 import '../domain/repositories/mount_registry.dart';
 import '../domain/repositories/sync_state_store.dart';
 import '../domain/services/capability_negotiator.dart';
+import '../domain/services/conflict_detector.dart';
 import '../domain/value_objects/capability.dart';
 import '../domain/value_objects/drive_id.dart';
 import '../domain/value_objects/local_path.dart';
@@ -53,6 +54,7 @@ class LocalDriveEndpoint implements DriveEndpoint {
   final IdGenerator _ids;
   final Clock _clock;
   final CapabilityNegotiator _negotiator;
+  final ConflictDetector _detector;
   final ServeUrlBuilder _serveUrl;
 
   LocalDriveEndpoint({
@@ -65,6 +67,7 @@ class LocalDriveEndpoint implements DriveEndpoint {
     IdGenerator? idGenerator,
     Clock? clock,
     CapabilityNegotiator negotiator = const CapabilityNegotiator(),
+    ConflictDetector detector = const ConflictDetector(),
     ServeUrlBuilder? serveUrl,
   }) : providers = providers ?? ProviderRegistry.local(endpoint: identity.id),
        published = published ?? InMemoryDriveRegistry(),
@@ -73,6 +76,7 @@ class LocalDriveEndpoint implements DriveEndpoint {
        _ids = idGenerator ?? RandomIdGenerator(),
        _clock = clock ?? SystemClock(),
        _negotiator = negotiator,
+       _detector = detector,
        _serveUrl = serveUrl ?? _defaultServeUrl;
 
   static String _defaultServeUrl(EndpointIdentity self, Drive drive) {
@@ -245,11 +249,34 @@ class LocalDriveEndpoint implements DriveEndpoint {
       );
     }
 
-    // A read-write mirror with local edits publishes them (and conflicts if the
-    // origin also moved); otherwise we pull the origin's changes down.
-    final direction = info.accessMode.isReadWrite && localChanged
-        ? SyncDirection.push
-        : SyncDirection.pull;
+    // A read-write mirror with local-only edits publishes them; an unchanged
+    // mirror pulls the origin's changes down. Any other combination — the local
+    // copy diverged but cannot be pushed (read-only), or both sides moved —
+    // would lose work if we pulled (deleting/overwriting local files) or pushed
+    // (clobbering the origin), so we refuse and surface a conflict.
+    final canPush =
+        info.accessMode.isReadWrite && localChanged && !originChanged;
+    final direction = canPush ? SyncDirection.push : SyncDirection.pull;
+
+    if (direction == SyncDirection.pull && localChanged) {
+      final conflict = _detector.detectForPull(
+        driveId: syncDrive.id,
+        baseline: baseline,
+        local: localRef,
+        origin: originRef,
+      );
+      if (conflict != null) {
+        await syncStates.save(
+          mid,
+          state.copyWith(
+            status: SyncStatus.conflicted,
+            lastSyncedAt: _clock.now(),
+          ),
+        );
+        throw ConflictDetectedException(conflict);
+      }
+    }
+
     final plan = await synchronizer.plan(
       mount: info,
       baseline: baseline,

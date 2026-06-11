@@ -1,3 +1,16 @@
+## 1.1.2
+
+- Fixed: syncing a mount could silently delete local-only changes. A pull
+  overwrites/deletes local files to match the origin, and `syncMount` previously
+  pulled whenever it was not pushing — so a read-only mount (or any mount whose
+  local copy had diverged) would discard a newly created or edited file instead
+  of preserving it. `syncMount` now only pushes when the mount is read-write and
+  only the local side changed; any other divergent case raises
+  `ConflictDetectedException` (via the new `ConflictDetector.detectForPull`)
+  rather than destroying local work.
+  - Added `ConflictKind.localDivergence` for a local copy that diverged from the
+    baseline but cannot be published.
+
 ## 1.1.1
 
 - `ManifestBuilder`:

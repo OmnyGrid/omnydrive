@@ -8,6 +8,10 @@ enum ConflictKind {
   /// Both the local copy and the origin changed the same content.
   contentDivergence,
 
+  /// The local copy diverged from the baseline but cannot be published
+  /// (read-only mount); pulling would silently discard the local changes.
+  localDivergence,
+
   /// A push targeted a protected branch (e.g. `main`).
   protectedBranch,
 
