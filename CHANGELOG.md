@@ -1,3 +1,23 @@
+## 1.1.4
+
+- Performance: building a directory manifest (the `currentRef` computed twice on
+  every `syncMount`) no longer reads and SHA-256-hashes every file. A persisted
+  stat-cache lets `ManifestBuilder` reuse a file's recorded hash when its
+  `(size, mtime)` are unchanged, so an unchanged mount with thousands of files
+  costs one `stat()` per file instead of a full read + hash. The produced
+  `FileManifest` — and therefore the directory's content-addressed `SyncRef` —
+  is byte-identical to a full rebuild.
+  - The cache lives at `<root>/.omnydrive/manifest-cache.json` (an
+    already-ignored directory) and is purely advisory: a missing, malformed, or
+    version-mismatched cache, or a write failure on a read-only filesystem,
+    falls back to a full rebuild and never errors.
+  - Correctness: a file is trusted only when its mtime is strictly older than
+    the cache's build timestamp, re-hashing anything modified within the
+    filesystem's mtime resolution of the last build (git's "racy clean" rule).
+  - Added `ManifestCache`/`CachedEntry`
+    (`lib/src/infrastructure/providers/directory/manifest_cache.dart`) and a
+    `useCache` flag on `ManifestBuilder` (default on; off disables the cache).
+
 ## 1.1.3
 
 - Performance: directory drive sync now transfers changed files concurrently
