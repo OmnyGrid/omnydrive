@@ -4,6 +4,7 @@ import '../../application/provider_registry.dart';
 import '../../domain/contracts/content_source.dart';
 import '../../domain/value_objects/endpoint_id.dart';
 import '../../domain/value_objects/origin_uri.dart';
+import '../../domain/value_objects/path_filter.dart';
 import '../../shared/utils/clock.dart';
 import '../providers/directory/directory_provider.dart';
 import '../providers/git/git_cli.dart';
@@ -22,7 +23,13 @@ ProviderRegistry networkedProviderRegistry({
 }) {
   final httpClient = client ?? http.Client();
 
-  ContentSource resolve(OriginUri origin, {required bool writable}) {
+  // The filter only bites on local directories; a remote `http(s)` origin is
+  // already filtered server-side, so the parameter is ignored there.
+  ContentSource resolve(
+    OriginUri origin, {
+    required bool writable,
+    PathFilter? filter,
+  }) {
     switch (origin.scheme) {
       case OriginUriScheme.http:
       case OriginUriScheme.https:
@@ -35,6 +42,7 @@ ProviderRegistry networkedProviderRegistry({
         return DirectoryProvider.localDirectoryResolver(
           origin,
           writable: writable,
+          filter: filter,
         );
     }
   }

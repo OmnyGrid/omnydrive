@@ -1,3 +1,21 @@
+## 1.2.0
+
+- Feature: publish only part of a local directory with sub-path filters. A new
+  `PathFilter` value object (gitignore-style globs: `*`, `**`, `?`, trailing-slash
+  / bare-directory subtree matching) carries `include`/`exclude` patterns with
+  exclude-wins, include-as-whitelist semantics.
+  - CLI: `omnydrive publish` gains repeatable `--include` / `--exclude` options
+    (directory drives only; combining them with `--git` is rejected).
+  - API: `DriveEndpoint.publishDirectory` accepts an optional `filter:`; the
+    filter is stored on `Drive` (serialized, registered with the hub) and applied
+    during the manifest walk in `ManifestBuilder`, so excluded files are never
+    hashed.
+  - The filter is enforced at the serving boundary (`ContentServer`), so every
+    cloner automatically receives only the surviving sub-paths with no
+    client-side configuration. `currentRef`/`describe` (provider contract) and
+    the `ContentSourceResolver` now thread the filter through; `syncMount`
+    applies it on both sides so a filtered drive syncs cleanly.
+
 ## 1.1.4
 
 - Performance: building a directory manifest (the `currentRef` computed twice on

@@ -17,6 +17,7 @@ import '../../../domain/value_objects/endpoint_id.dart';
 import '../../../domain/value_objects/local_path.dart';
 import '../../../domain/value_objects/mount_id.dart';
 import '../../../domain/value_objects/origin_uri.dart';
+import '../../../domain/value_objects/path_filter.dart';
 import '../../../domain/value_objects/sync_ref.dart';
 import '../../../shared/errors/domain_exception.dart';
 import '../../../shared/observability/progress.dart';
@@ -29,7 +30,11 @@ import 'local_content_source.dart';
 /// resolver handles `dir`/`file` origins; an HTTP resolver is supplied for
 /// remote drives served by an endpoint content server.
 typedef ContentSourceResolver =
-    ContentSource Function(OriginUri origin, {required bool writable});
+    ContentSource Function(
+      OriginUri origin, {
+      required bool writable,
+      PathFilter? filter,
+    });
 
 /// [DriveProvider] for filesystem directories, local or remote.
 ///
@@ -55,6 +60,7 @@ class DirectoryProvider implements DriveProvider {
   static ContentSource localDirectoryResolver(
     OriginUri origin, {
     required bool writable,
+    PathFilter? filter,
   }) {
     final String path;
     switch (origin.scheme) {
@@ -67,13 +73,14 @@ class DirectoryProvider implements DriveProvider {
           'DirectoryProvider cannot resolve origin "${origin.value}"',
         );
     }
-    return LocalContentSource(path, isWritable: writable);
+    return LocalContentSource(path, isWritable: writable, filter: filter);
   }
 
   @override
   Future<Drive> describe(
     OriginUri origin, {
     required AccessMode accessMode,
+    PathFilter? filter,
   }) async {
     final name = _nameFrom(origin);
     return Drive(
@@ -87,13 +94,14 @@ class DirectoryProvider implements DriveProvider {
         ProviderType.directory,
         accessMode,
       ),
+      filter: filter,
       createdAt: _clock.now(),
     );
   }
 
   @override
-  Future<SyncRef> currentRef(OriginUri origin) async {
-    final source = resolveSource(origin, writable: false);
+  Future<SyncRef> currentRef(OriginUri origin, {PathFilter? filter}) async {
+    final source = resolveSource(origin, writable: false, filter: filter);
     return (await source.manifest()).hash();
   }
 
@@ -104,7 +112,11 @@ class DirectoryProvider implements DriveProvider {
     required MountType mountType,
     ProgressReporter? progress,
   }) async {
-    final origin = resolveSource(drive.originUri, writable: false);
+    final origin = resolveSource(
+      drive.originUri,
+      writable: false,
+      filter: drive.filter,
+    );
 
     if (mountType == MountType.mirror) {
       await Directory(dest.value).create(recursive: true);
@@ -159,10 +171,13 @@ class DirectoryProvider implements DriveProvider {
   @override
   Synchronizer synchronizer(Drive drive) => DirectorySynchronizer(
     drive: drive,
-    resolveOrigin: ({required bool writable}) =>
-        resolveSource(drive.originUri, writable: writable),
+    resolveOrigin: ({required bool writable}) => resolveSource(
+      drive.originUri,
+      writable: writable,
+      filter: drive.filter,
+    ),
     resolveLocal: (localPath) =>
-        LocalContentSource(localPath, isWritable: true),
+        LocalContentSource(localPath, isWritable: true, filter: drive.filter),
   );
 
   String _nameFrom(OriginUri origin) {
