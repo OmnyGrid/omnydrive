@@ -14,14 +14,31 @@ class FakeContentSource implements ContentSource {
   @override
   final bool isWritable;
 
+  /// Whether this source advertises in-place copy support.
+  final bool canCopy;
+
+  /// When true, every [copy] reports a miss (as if the source drifted), forcing
+  /// the synchronizer onto its byte-transfer fallback.
+  final bool copyFails;
+
   int inFlight = 0;
   int peakInFlight = 0;
+
+  /// How many [readBytes]/[copy] calls have been served, so tests can prove
+  /// duplicate content was copied rather than re-read and re-transferred.
+  int reads = 0;
+  int copies = 0;
 
   FakeContentSource({
     Map<String, List<int>>? files,
     this.isWritable = true,
+    this.canCopy = true,
+    this.copyFails = false,
     this.delay = const Duration(milliseconds: 5),
   }) : files = files ?? {};
+
+  ContentHash _hashOf(List<int> bytes) =>
+      ContentHash(hex: sha256.convert(bytes).toString());
 
   Future<T> _tracked<T>(FutureOr<T> Function() body) async {
     inFlight++;
@@ -50,8 +67,10 @@ class FakeContentSource implements ContentSource {
   }
 
   @override
-  Future<List<int>> readBytes(String relativePath) =>
-      _tracked(() => files[relativePath]!);
+  Future<List<int>> readBytes(String relativePath) => _tracked(() {
+    reads++;
+    return files[relativePath]!;
+  });
 
   @override
   Future<void> writeBytes(String relativePath, List<int> bytes) =>
@@ -60,6 +79,22 @@ class FakeContentSource implements ContentSource {
   @override
   Future<void> delete(String relativePath) =>
       _tracked(() => files.remove(relativePath));
+
+  @override
+  Future<bool> supportsCopy() async => canCopy && isWritable;
+
+  @override
+  Future<bool> copy(String fromPath, String toPath, ContentHash expectedHash) =>
+      _tracked(() {
+        if (copyFails) return false;
+        final source = files[fromPath];
+        // Verify the source still holds the expected content, mirroring the
+        // real sources; a mismatch tells the caller to fall back to a transfer.
+        if (source == null || _hashOf(source) != expectedHash) return false;
+        copies++;
+        files[toPath] = source;
+        return true;
+      });
 }
 
 void main() {
@@ -181,4 +216,163 @@ void main() {
       expect(result.metrics.bytesTransferred, equals(expectedBytes));
     },
   );
+
+  test(
+    'push sends duplicate content once and copies it to the other paths',
+    () async {
+      final dup = utf8.encode('shared build artifact');
+      final local = FakeContentSource(
+        files: {
+          'src/lib.js': dup,
+          'build/lib.js': dup, // identical content copied into the build dir
+          'unique.txt': utf8.encode('one of a kind'),
+        },
+      );
+      final origin = FakeContentSource();
+      final baseline = await origin.manifest().then((m) => m.hash());
+
+      final sync = DirectorySynchronizer(
+        drive: driveOf(),
+        resolveOrigin: ({required bool writable}) => origin,
+        resolveLocal: (_) => local,
+      );
+
+      final plan = await sync.plan(
+        mount: mountOf(baseline),
+        baseline: baseline,
+        direction: SyncDirection.push,
+      );
+      final result = await sync.apply(
+        mount: mountOf(baseline),
+        plan: plan,
+        baseline: baseline,
+      );
+
+      // Every file arrived intact at the origin.
+      expect(
+        origin.files.keys,
+        containsAll(<String>['src/lib.js', 'build/lib.js', 'unique.txt']),
+      );
+      expect(origin.files['src/lib.js'], equals(dup));
+      expect(origin.files['build/lib.js'], equals(dup));
+      expect(result.appliedChanges, equals(3));
+
+      // The duplicate's bytes were read from local exactly once (one
+      // representative + the unique file) and reused via a server-side copy.
+      expect(local.reads, equals(2));
+      expect(origin.copies, equals(1));
+
+      // Only the bytes actually sent count — the deduped copy is free.
+      expect(
+        result.metrics.bytesTransferred,
+        equals(dup.length + 'one of a kind'.length),
+      );
+    },
+  );
+
+  test(
+    'pull reuses content the local copy already holds, with no re-download',
+    () async {
+      final shared = utf8.encode('already on disk');
+      // Origin holds the shared content at an existing path plus a brand-new one.
+      final origin = FakeContentSource(
+        files: {'keep.bin': shared, 'mirror/keep.bin': shared},
+      );
+      // Local already has it at keep.bin (matching the origin), so the new path
+      // can be produced by an in-place copy instead of a download.
+      final local = FakeContentSource(files: {'keep.bin': shared});
+      final baseline = await local.manifest().then((m) => m.hash());
+
+      final sync = DirectorySynchronizer(
+        drive: driveOf(),
+        resolveOrigin: ({required bool writable}) => origin,
+        resolveLocal: (_) => local,
+      );
+
+      final plan = await sync.plan(
+        mount: mountOf(baseline),
+        baseline: baseline,
+        direction: SyncDirection.pull,
+      );
+      final result = await sync.apply(
+        mount: mountOf(baseline),
+        plan: plan,
+        baseline: baseline,
+      );
+
+      expect(local.files['mirror/keep.bin'], equals(shared));
+      expect(result.appliedChanges, equals(1));
+      // The content was reused locally: copied at the dest, never read from origin.
+      expect(local.copies, equals(1));
+      expect(origin.reads, equals(0));
+      expect(result.metrics.bytesTransferred, equals(0));
+    },
+  );
+
+  test('a drifted copy source falls back to a normal byte transfer', () async {
+    final dup = utf8.encode('shared build artifact');
+    final local = FakeContentSource(
+      files: {'src/lib.js': dup, 'build/lib.js': dup},
+    );
+    // Origin advertises copy support but every copy misses (source drifted),
+    // so the duplicate must be reconstructed by a full transfer.
+    final origin = FakeContentSource(copyFails: true);
+    final baseline = await origin.manifest().then((m) => m.hash());
+
+    final sync = DirectorySynchronizer(
+      drive: driveOf(),
+      resolveOrigin: ({required bool writable}) => origin,
+      resolveLocal: (_) => local,
+    );
+
+    final plan = await sync.plan(
+      mount: mountOf(baseline),
+      baseline: baseline,
+      direction: SyncDirection.push,
+    );
+    final result = await sync.apply(
+      mount: mountOf(baseline),
+      plan: plan,
+      baseline: baseline,
+    );
+
+    // Both files still land correctly despite the failed copy.
+    expect(origin.files['src/lib.js'], equals(dup));
+    expect(origin.files['build/lib.js'], equals(dup));
+    expect(origin.copies, equals(0));
+    // Fallback transferred the second copy's bytes too: both paths paid full price.
+    expect(result.metrics.bytesTransferred, equals(dup.length * 2));
+  });
+
+  test('a dest without copy support transfers every file as before', () async {
+    final dup = utf8.encode('shared build artifact');
+    final local = FakeContentSource(
+      files: {'src/lib.js': dup, 'build/lib.js': dup},
+    );
+    final origin = FakeContentSource(canCopy: false);
+    final baseline = await origin.manifest().then((m) => m.hash());
+
+    final sync = DirectorySynchronizer(
+      drive: driveOf(),
+      resolveOrigin: ({required bool writable}) => origin,
+      resolveLocal: (_) => local,
+    );
+
+    final plan = await sync.plan(
+      mount: mountOf(baseline),
+      baseline: baseline,
+      direction: SyncDirection.push,
+    );
+    final result = await sync.apply(
+      mount: mountOf(baseline),
+      plan: plan,
+      baseline: baseline,
+    );
+
+    expect(origin.files['src/lib.js'], equals(dup));
+    expect(origin.files['build/lib.js'], equals(dup));
+    expect(origin.copies, equals(0));
+    expect(local.reads, equals(2));
+    expect(result.metrics.bytesTransferred, equals(dup.length * 2));
+  });
 }

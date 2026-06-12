@@ -6,8 +6,10 @@ import 'package:http/io_client.dart';
 
 import '../../domain/contracts/content_source.dart';
 import '../../domain/entities/file_manifest.dart';
+import '../../domain/value_objects/content_hash.dart';
 import '../../shared/errors/domain_exception.dart';
 import '../../shared/utils/content_compression.dart';
+import '../../shared/version.dart';
 import 'api_errors.dart';
 
 /// A [ContentSource] backed by a remote endpoint's HTTP content server.
@@ -32,6 +34,10 @@ class HttpContentSource implements ContentSource {
 
   /// The compression policy applied to writes and advertised on reads.
   final ContentCompression _compression;
+
+  /// Caches the one-time server capability probe for [supportsCopy], so a
+  /// transfer pays at most one `/version` round trip.
+  Future<bool>? _copySupport;
 
   @override
   final bool isWritable;
@@ -123,6 +129,54 @@ class HttpContentSource implements ContentSource {
         response.statusCode != 404) {
       throwApiError(response.statusCode, response.body);
     }
+  }
+
+  @override
+  Future<bool> supportsCopy() {
+    if (!isWritable) return Future.value(false);
+    return _copySupport ??= _probeCopySupport();
+  }
+
+  /// Probes the server-root `/version` endpoint for the
+  /// [serverSideCopyCapability]. The `/version` route lives at the host root,
+  /// not under `/drives/...`, so derive it from [base]. Any failure or a server
+  /// that doesn't advertise the capability resolves to `false` (older servers
+  /// then transparently fall back to full byte transfers).
+  Future<bool> _probeCopySupport() async {
+    try {
+      final root = Uri.parse(base).replace(path: '/version', query: null);
+      final response = await _client.get(root, headers: _accept);
+      if (response.statusCode != 200) return false;
+      // The endpoint wraps payloads in a {success, data} envelope.
+      final body = jsonDecode(utf8.decode(_decoded(response)));
+      final data = body is Map<String, dynamic> ? body['data'] : null;
+      final caps = data is Map<String, dynamic> ? data['capabilities'] : null;
+      return caps is List && caps.contains(serverSideCopyCapability);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  @override
+  Future<bool> copy(
+    String fromPath,
+    String toPath,
+    ContentHash expectedHash,
+  ) async {
+    _ensureWritable();
+    final response = await _client.post(
+      Uri.parse('$base/copy'),
+      headers: const {'content-type': 'application/json; charset=utf-8'},
+      body: jsonEncode({
+        'from': fromPath,
+        'to': toPath,
+        'hash': expectedHash.value,
+      }),
+    );
+    if (response.statusCode == 200 || response.statusCode == 204) return true;
+    // 409 means the source drifted or vanished; the caller transfers bytes.
+    if (response.statusCode == 409) return false;
+    throwApiError(response.statusCode, response.body);
   }
 
   void _ensureWritable() {

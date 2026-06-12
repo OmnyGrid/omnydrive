@@ -10,6 +10,7 @@ import '../../domain/contracts/content_source.dart';
 import '../../domain/entities/drive_registration.dart';
 import '../../domain/enums/provider_type.dart';
 import '../../domain/repositories/drive_registry.dart';
+import '../../domain/value_objects/content_hash.dart';
 import '../../domain/value_objects/drive_id.dart';
 import '../../domain/value_objects/origin_uri.dart';
 import '../../shared/errors/domain_exception.dart';
@@ -46,6 +47,7 @@ class ContentServer {
       ..get('/drives/<endpoint>/<name>/manifest', _manifest)
       ..get('/drives/<endpoint>/<name>/files/<path|.*>', _readFile)
       ..put('/drives/<endpoint>/<name>/files/<path|.*>', _writeFile)
+      ..post('/drives/<endpoint>/<name>/copy', _copyFile)
       ..delete('/drives/<endpoint>/<name>/files/<path|.*>', _deleteFile);
     return const Pipeline().addHandler(router.call);
   }
@@ -59,6 +61,7 @@ class ContentServer {
   Response _version(Request request) => JsonResponse.ok({
     'name': 'omnydrive-content',
     'version': omnyDriveVersion,
+    'capabilities': [serverSideCopyCapability],
   });
 
   Future<Response> _manifest(Request request) => _guard(() async {
@@ -98,6 +101,25 @@ class ContentServer {
       bytes = ContentCompression.decode(bytes);
     }
     await source.writeBytes(request.params['path']!, bytes);
+    return JsonResponse.noContent();
+  });
+
+  /// Reuses content already present on this drive: copies [from] to [to] in
+  /// place — but only if [from] still hashes to the supplied value — so peers
+  /// can avoid re-uploading bytes the origin already holds. A `409` signals the
+  /// source drifted or vanished, telling the client to fall back to a transfer.
+  Future<Response> _copyFile(Request request) => _guard(() async {
+    final source = await _sourceFor(request, writable: true);
+    final body =
+        jsonDecode(await request.readAsString()) as Map<String, dynamic>;
+    final copied = await source.copy(
+      body['from'] as String,
+      body['to'] as String,
+      ContentHash.parse(body['hash'] as String),
+    );
+    if (!copied) {
+      return Response(409, body: 'copy source no longer matches expected hash');
+    }
     return JsonResponse.noContent();
   });
 
