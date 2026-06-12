@@ -1,10 +1,13 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 
 import '../../domain/contracts/content_source.dart';
 import '../../domain/entities/file_manifest.dart';
 import '../../shared/errors/domain_exception.dart';
+import '../../shared/utils/content_compression.dart';
 import 'api_errors.dart';
 
 /// A [ContentSource] backed by a remote endpoint's HTTP content server.
@@ -27,40 +30,88 @@ class HttpContentSource implements ContentSource {
 
   final http.Client _client;
 
+  /// The compression policy applied to writes and advertised on reads.
+  final ContentCompression _compression;
+
   @override
   final bool isWritable;
 
-  HttpContentSource(String base, {http.Client? client, this.isWritable = false})
-    : base = base.endsWith('/') ? base.substring(0, base.length - 1) : base,
-      _client = client ?? http.Client();
+  HttpContentSource(
+    String base, {
+    http.Client? client,
+    this.isWritable = false,
+    ContentCompression? compression,
+  }) : base = base.endsWith('/') ? base.substring(0, base.length - 1) : base,
+       _client = client ?? defaultClient(),
+       _compression = compression ?? ContentCompression.standard;
+
+  /// The client used when none is injected.
+  ///
+  /// Auto-uncompress is disabled so gzip handling stays fully explicit: the
+  /// body arrives exactly as the server sent it, so a `content-encoding: gzip`
+  /// header reliably means the bytes are still compressed. (The default
+  /// `IOClient` decompresses transparently yet *keeps* the header, which makes
+  /// the body's state ambiguous.)
+  static http.Client defaultClient() =>
+      IOClient(HttpClient()..autoUncompress = false);
 
   @override
   Future<FileManifest> manifest() async {
-    final response = await _client.get(Uri.parse('$base/manifest'));
+    final response = await _client.get(
+      Uri.parse('$base/manifest'),
+      headers: _accept,
+    );
     if (response.statusCode != 200) {
       throwApiError(response.statusCode, response.body);
     }
-    return FileManifest.fromJson(
-      jsonDecode(response.body) as Map<String, dynamic>,
-    );
+    final json = utf8.decode(_decoded(response));
+    return FileManifest.fromJson(jsonDecode(json) as Map<String, dynamic>);
   }
 
   @override
   Future<List<int>> readBytes(String relativePath) async {
-    final response = await _client.get(_fileUri(relativePath));
+    final response = await _client.get(
+      _fileUri(relativePath),
+      headers: _accept,
+    );
     if (response.statusCode != 200) {
       throwApiError(response.statusCode, response.body);
     }
-    return response.bodyBytes;
+    return _decoded(response);
   }
 
   @override
   Future<void> writeBytes(String relativePath, List<int> bytes) async {
     _ensureWritable();
-    final response = await _client.put(_fileUri(relativePath), body: bytes);
+    final compress = _compression.shouldCompress(relativePath, bytes.length);
+    final response = await _client.put(
+      _fileUri(relativePath),
+      headers: compress ? const {'content-encoding': 'gzip'} : null,
+      body: compress ? _compression.encode(bytes) : bytes,
+    );
     if (response.statusCode != 200 && response.statusCode != 204) {
       throwApiError(response.statusCode, response.body);
     }
+  }
+
+  /// Only advertise gzip when this policy is enabled; a disabled policy asks the
+  /// server for plain bytes (and the magic-byte check below still decodes
+  /// anything that arrives gzipped anyway).
+  Map<String, String>? get _accept =>
+      _compression.enabled ? const {'accept-encoding': 'gzip'} : null;
+
+  /// Returns the response body bytes, gunzipping only when the server marked
+  /// them gzip-encoded **and** they still look like a gzip stream. This stays
+  /// correct regardless of the injected client: Dart's default `IOClient`
+  /// transparently uncompresses the body yet keeps the `content-encoding`
+  /// header, so keying on the header alone would double-decode — the magic-byte
+  /// check ([ContentCompression.looksGzipped]) guards against that.
+  List<int> _decoded(http.Response response) {
+    final bytes = response.bodyBytes;
+    return ContentCompression.isGzip(response.headers['content-encoding']) &&
+            ContentCompression.looksGzipped(bytes)
+        ? ContentCompression.decode(bytes)
+        : bytes;
   }
 
   @override

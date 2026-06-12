@@ -1,3 +1,32 @@
+## 1.3.0
+
+- Performance: directory-drive content now transfers gzip-compressed over HTTP
+  by default. File pulls, file pushes and the JSON manifest are gzipped at level
+  4 (near-identical ratio to the default level 6, markedly faster) using
+  `dart:io`'s `GZipCodec` — no new dependency. Negotiation rides the standard
+  `Accept-Encoding` / `Content-Encoding` headers, so peers interoperate
+  transparently.
+  - Already-compressed file types (jpeg, png, mp4, zip, pdf, …) and payloads
+    below the threshold (1 KiB by default) are sent verbatim, since re-gzipping
+    them costs CPU for no real gain.
+  - The content-source HTTP client disables transparent auto-uncompress so gzip
+    handling stays explicit and deterministic; `HttpContentSource` and
+    `networkedProviderRegistry` share a single client factory.
+- API: compression is now configurable and integration-friendly.
+  - `ContentCompression` is an injectable policy (`enabled`, `level`, `minBytes`,
+    `skipExtensions`) with `ContentCompression.standard` / `.disabled` presets,
+    accepted by `ContentServer`, `HttpContentSource`, `networkedProviderRegistry`
+    and `OmnyClient`. Defaults are unchanged.
+  - Fix: reading a compressed file (> 1 KiB) through `OmnyClient` — or any
+    integrator-supplied `http.Client` with transparent gzip — no longer throws
+    `FormatException: Filter error, bad data`. Decoding now also checks the gzip
+    magic bytes (`ContentCompression.looksGzipped`), so it never double-decodes a
+    body an auto-uncompress client already inflated. `OmnyClient` defaults to the
+    non-auto-uncompress content client.
+  - `ContentCompression` is transport-agnostic (no HTTP dependency) and exported
+    from `omnydrive_client.dart`, so custom `ContentSource` transports can reuse
+    `encode` / `decode` / `shouldCompress` / `looksGzipped` directly.
+
 ## 1.2.0
 
 - Feature: publish only part of a local directory with sub-path filters. A new

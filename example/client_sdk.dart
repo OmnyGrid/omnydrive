@@ -19,6 +19,11 @@ Future<void> main() async {
     final docs = s.dir('docs');
     File('$docs/readme.md').writeAsStringSync('hello\n');
     File('$docs/guide.md').writeAsStringSync('a short guide\n');
+    // A larger file so the transfer is gzip-compressed on the wire; OmnyClient
+    // transparently decompresses it on read.
+    File(
+      '$docs/manual.md',
+    ).writeAsStringSync('# Manual\n${'lorem ipsum ' * 400}\n');
     await alpha.publishDirectory(path: docs, name: 'docs');
 
     final media = s.dir('media');
@@ -36,7 +41,9 @@ Future<void> main() async {
         print('${reg.id}  (${manifest.entries.length} file(s))');
         for (final path in manifest.sortedPaths) {
           final bytes = await content.readBytes(path);
-          print('  $path -> ${String.fromCharCodes(bytes).trim()}');
+          final text = String.fromCharCodes(bytes).trim();
+          final preview = text.length > 40 ? '${text.substring(0, 40)}…' : text;
+          print('  $path (${bytes.length} B) -> $preview');
         }
       }
     } finally {

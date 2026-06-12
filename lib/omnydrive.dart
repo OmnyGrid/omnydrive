@@ -18,6 +18,7 @@ export 'src/shared/utils/id_generator.dart';
 export 'src/shared/utils/retry_policy.dart';
 export 'src/shared/utils/atomic_file.dart';
 export 'src/shared/utils/file_lock.dart';
+export 'src/shared/utils/content_compression.dart';
 export 'src/shared/observability/logger.dart';
 export 'src/shared/observability/progress.dart';
 export 'src/shared/observability/metrics.dart';

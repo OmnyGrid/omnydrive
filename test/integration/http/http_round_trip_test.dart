@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:http/http.dart' as http;
 import 'package:omnydrive/omnydrive.dart';
 import 'package:test/test.dart';
 
@@ -258,5 +260,214 @@ void main() {
     final request = await HttpClient().getUrl(Uri.parse('$hubUrl/version'));
     final response = await request.close();
     expect(response.statusCode, 200);
+  });
+
+  group('transfer compression', () {
+    // A raw client that does NOT auto-decompress, so we can inspect what the
+    // content server actually puts on the wire.
+    Future<HttpClientResponse> rawGet(String url) async {
+      final client = HttpClient()..autoUncompress = false;
+      addTearDown(() => client.close(force: true));
+      final req = await client.getUrl(Uri.parse(url));
+      req.headers.set(HttpHeaders.acceptEncodingHeader, 'gzip');
+      return req.close();
+    }
+
+    test('a large compressible file is gzip-encoded on the wire', () async {
+      final src = await TempDir.create();
+      addTearDown(src.cleanup);
+      final big = 'compress me ' * 2000; // well over minBytes, very repetitive.
+      await src.writeFile('notes.txt', big);
+      await publisher.publishDirectory(path: src.path, name: 'docs');
+
+      final res = await rawGet('$contentUrl/drives/alpha/docs/files/notes.txt');
+      expect(res.statusCode, 200);
+      expect(res.headers.value('content-encoding'), 'gzip');
+
+      final wire = await res.fold<List<int>>([], (a, b) => a..addAll(b));
+      expect(wire.length, lessThan(big.length)); // actually smaller.
+      expect(utf8.decode(gzip.decode(wire)), big); // and decodes back.
+    });
+
+    test('an already-compressed file is sent verbatim', () async {
+      final src = await TempDir.create();
+      addTearDown(src.cleanup);
+      // .jpg in the incompressible set; bytes are large but not gzipped.
+      await src.writeFile('photo.jpg', 'x' * 5000);
+      await publisher.publishDirectory(path: src.path, name: 'docs');
+
+      final res = await rawGet('$contentUrl/drives/alpha/docs/files/photo.jpg');
+      expect(res.statusCode, 200);
+      expect(res.headers.value('content-encoding'), isNull);
+    });
+
+    test(
+      'a tiny file stays below the threshold and is not compressed',
+      () async {
+        final src = await TempDir.create();
+        addTearDown(src.cleanup);
+        await src.writeFile('small.txt', 'hi');
+        await publisher.publishDirectory(path: src.path, name: 'docs');
+
+        final res = await rawGet(
+          '$contentUrl/drives/alpha/docs/files/small.txt',
+        );
+        expect(res.statusCode, 200);
+        expect(res.headers.value('content-encoding'), isNull);
+      },
+    );
+
+    test('a large file round-trips intact through the real client', () async {
+      final src = await TempDir.create();
+      addTearDown(src.cleanup);
+      final big = 'lorem ipsum dolor ' * 3000;
+      await src.writeFile('doc.txt', big);
+      final drive = await publisher.publishDirectory(
+        path: src.path,
+        name: 'docs',
+      );
+
+      final dst = await TempDir.create();
+      addTearDown(dst.cleanup);
+      final dest = dst.resolve('mirror');
+      final mount = await cloner.cloneDrive(
+        driveId: drive.id.value,
+        dest: dest,
+      );
+      expect(File('$dest/doc.txt').readAsStringSync(), big);
+
+      // Push a large edit back; the PUT body is gzip-encoded and decoded server-side.
+      final edited = '$big tail';
+      await File('$dest/doc.txt').writeAsString(edited);
+      final result = await cloner.syncMount(mount.id.value);
+      expect(result.status, SyncStatus.clean);
+      expect(File('${src.path}/doc.txt').readAsStringSync(), edited);
+    });
+
+    test(
+      'OmnyClient reads a large compressible file (regression: no double-decode)',
+      () async {
+        final src = await TempDir.create();
+        addTearDown(src.cleanup);
+        final big = 'omnyclient ' * 2000; // > 1 KiB, compressible
+        await src.writeFile('big.txt', big);
+        await src.writeFile('small.txt', 'hi');
+        await publisher.publishDirectory(path: src.path, name: 'docs');
+
+        final client = OmnyClient(hubUrl);
+        addTearDown(client.close);
+        final reg = (await client.drives()).firstWhere(
+          (r) => r.id.value == 'alpha/docs',
+        );
+        final content = client.content(reg);
+
+        // Manifest and a > 1 KiB file both come back gzip-encoded; before the
+        // fix the shared auto-uncompress client double-decoded and threw.
+        final manifest = await content.manifest();
+        expect(
+          manifest.sortedPaths,
+          containsAll(<String>['big.txt', 'small.txt']),
+        );
+        expect(utf8.decode(await content.readBytes('big.txt')), big);
+        expect(utf8.decode(await content.readBytes('small.txt')), 'hi');
+      },
+    );
+
+    test(
+      'reads correctly through an injected auto-uncompress http.Client',
+      () async {
+        final src = await TempDir.create();
+        addTearDown(src.cleanup);
+        final big = 'inject ' * 2000;
+        await src.writeFile('doc.txt', big);
+        await publisher.publishDirectory(path: src.path, name: 'docs');
+
+        // A default http.Client() has autoUncompress = true: it decodes the body
+        // but keeps the content-encoding header. The magic-byte guard must stop
+        // _decoded from gunzipping the already-decoded bytes.
+        final plain = http.Client();
+        addTearDown(plain.close);
+        final source = HttpContentSource(
+          '$contentUrl/drives/alpha/docs',
+          client: plain,
+        );
+        expect(utf8.decode(await source.readBytes('doc.txt')), big);
+      },
+    );
+
+    test(
+      'a server with compression disabled never sets content-encoding',
+      () async {
+        final off = await ContentServer(
+          published,
+          compression: ContentCompression.disabled,
+        ).serve(address: '127.0.0.1', port: 0);
+        addTearDown(() => off.close(force: true));
+        final offUrl = 'http://127.0.0.1:${off.port}';
+
+        final src = await TempDir.create();
+        addTearDown(src.cleanup);
+        await src.writeFile('notes.txt', 'compress me ' * 2000);
+        await publisher.publishDirectory(path: src.path, name: 'docs');
+
+        final res = await rawGet('$offUrl/drives/alpha/docs/files/notes.txt');
+        expect(res.statusCode, 200);
+        expect(res.headers.value('content-encoding'), isNull);
+      },
+    );
+
+    test('a custom policy compresses below the default threshold', () async {
+      final custom = await ContentServer(
+        published,
+        compression: ContentCompression(minBytes: 16),
+      ).serve(address: '127.0.0.1', port: 0);
+      addTearDown(() => custom.close(force: true));
+      final customUrl = 'http://127.0.0.1:${custom.port}';
+
+      final src = await TempDir.create();
+      addTearDown(src.cleanup);
+      final mid = 'a' * 64; // under the 1 KiB default, over the custom 16 B
+      await src.writeFile('mid.txt', mid);
+      await publisher.publishDirectory(path: src.path, name: 'docs');
+
+      final res = await rawGet('$customUrl/drives/alpha/docs/files/mid.txt');
+      expect(res.headers.value('content-encoding'), 'gzip');
+      final wire = await res.fold<List<int>>([], (a, b) => a..addAll(b));
+      expect(utf8.decode(gzip.decode(wire)), mid);
+    });
+  });
+
+  group('compression for custom transports', () {
+    test('a non-HTTP transport can use the ContentCompression toolkit', () async {
+      // Mirrors what a custom ContentSource (e.g. omnyshell's channel transport)
+      // does: compress at the sending edge, decompress at the receiving edge,
+      // using only the public, HTTP-free toolkit.
+      final wire = <String, List<int>>{};
+      final gz = ContentCompression.standard;
+
+      Future<void> send(String path, List<int> bytes) async {
+        wire[path] = gz.shouldCompress(path, bytes.length)
+            ? gz.encode(bytes)
+            : bytes;
+      }
+
+      Future<List<int>> receive(String path) async {
+        final bytes = wire[path]!;
+        return ContentCompression.looksGzipped(bytes)
+            ? ContentCompression.decode(bytes)
+            : bytes;
+      }
+
+      final big = utf8.encode('payload ' * 2000); // > 1 KiB
+      await send('doc.txt', big);
+      expect(ContentCompression.looksGzipped(wire['doc.txt']!), isTrue);
+      expect(wire['doc.txt']!.length, lessThan(big.length));
+      expect(await receive('doc.txt'), equals(big));
+
+      final tiny = utf8.encode('hi');
+      await send('small.txt', tiny);
+      expect(ContentCompression.looksGzipped(wire['small.txt']!), isFalse);
+      expect(await receive('small.txt'), equals(tiny));
+    });
   });
 }
