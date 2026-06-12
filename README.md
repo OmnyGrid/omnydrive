@@ -159,6 +159,28 @@ Endpoint state (identity, credentials, mounts) is persisted under `--state`
 (default `~/.omnydrive`). Exit codes map to error categories (2 = validation,
 3 = not found, 4 = unauthorized, 5 = access denied, 6 = conflict, …).
 
+#### Publishing a subset of a directory
+
+`publish` can expose only part of a directory tree with repeatable
+`--include` / `--exclude` glob filters. The filter is baked into the drive's
+served manifest, so **every cloner automatically receives only the surviving
+sub-paths** — no client-side configuration:
+
+```sh
+# Publish everything except build artifacts and any *.tmp file:
+omnydrive publish ./project --name code --exclude 'build/**' --exclude '**/*.tmp'
+
+# Publish only the docs and src trees (include acts as a whitelist):
+omnydrive publish ./project --name code --include 'docs/**' --include 'src/**'
+```
+
+Patterns are gitignore-style globs matched against each file's forward-slash
+relative path: `*` matches within a path segment, `**` crosses separators, `?`
+matches one character, and a trailing slash or bare directory name (`build/`,
+`build`) matches the whole subtree. Semantics: **exclude wins**, and when any
+`--include` is given a path must match at least one include. Filtering applies
+to directory drives only (not `--git`).
+
 ### Library
 
 Embed the engine directly — no servers required:
@@ -169,7 +191,12 @@ import 'package:omnydrive/omnydrive.dart';
 final hub = LocalDriveHub();
 final endpoint = LocalDriveEndpoint(identity: myIdentity, hub: hub);
 
-final drive = await endpoint.publishDirectory(path: '/data/docs', name: 'docs');
+final drive = await endpoint.publishDirectory(
+  path: '/data/docs',
+  name: 'docs',
+  // Optional: expose only a subset of the tree (directory drives only).
+  filter: PathFilter(exclude: ['build/**', '**/*.tmp']),
+);
 final mount = await endpoint.cloneDrive(driveId: drive.id.value, dest: '/tmp/m');
 final result = await endpoint.syncMount(mount.id.value); // throws on conflict
 ```

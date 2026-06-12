@@ -15,6 +15,7 @@ import '../../../domain/value_objects/endpoint_id.dart';
 import '../../../domain/value_objects/local_path.dart';
 import '../../../domain/value_objects/mount_id.dart';
 import '../../../domain/value_objects/origin_uri.dart';
+import '../../../domain/value_objects/path_filter.dart';
 import '../../../domain/value_objects/sync_ref.dart';
 import '../../../shared/errors/domain_exception.dart';
 import '../../../shared/observability/progress.dart';
@@ -46,6 +47,7 @@ class GitProvider implements DriveProvider {
   Future<Drive> describe(
     OriginUri origin, {
     required AccessMode accessMode,
+    PathFilter? filter, // sub-path filtering is a directory-drive feature
   }) async {
     final name = _nameFrom(origin);
     return Drive(
@@ -61,7 +63,7 @@ class GitProvider implements DriveProvider {
   }
 
   @override
-  Future<SyncRef> currentRef(OriginUri origin) async {
+  Future<SyncRef> currentRef(OriginUri origin, {PathFilter? filter}) async {
     final sha = await git.lsRemote(_url(origin), 'HEAD');
     if (sha == null) {
       throw ProviderException('Could not resolve HEAD of ${origin.value}');

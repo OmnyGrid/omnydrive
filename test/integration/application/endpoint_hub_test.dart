@@ -368,6 +368,39 @@ void main() {
     expect(result.appliedChanges, 0);
   });
 
+  test('a filtered publish exposes only the surviving sub-paths', () async {
+    final src = await TempDir.create();
+    addTearDown(src.cleanup);
+    await src.writeFile('keep/a.txt', 'A');
+    await src.writeFile('secret/p.txt', 'P');
+    await src.writeFile('notes.txt', 'N');
+
+    final drive = await publisher.publishDirectory(
+      path: src.path,
+      name: 'filtered',
+      filter: PathFilter(exclude: ['secret/**']),
+    );
+    // The filter survives registration with the hub.
+    final listed = await hub.getDrive(drive.id);
+    expect(listed.drive.filter.exclude, ['secret/**']);
+
+    final dst = await TempDir.create();
+    addTearDown(dst.cleanup);
+    final dest = dst.resolve('mirror');
+    final mount = await cloner.cloneDrive(driveId: drive.id.value, dest: dest);
+
+    // Only non-excluded files reach the mirror.
+    expect(File('$dest/keep/a.txt').readAsStringSync(), 'A');
+    expect(File('$dest/notes.txt').readAsStringSync(), 'N');
+    expect(File('$dest/secret/p.txt').existsSync(), isFalse);
+
+    // An excluded file changing on the origin does not perturb the sync.
+    await src.writeFile('secret/p.txt', 'P2');
+    final result = await cloner.syncMount(mount.id.value);
+    expect(result.status, SyncStatus.clean);
+    expect(result.appliedChanges, 0);
+  });
+
   test('cloning an unknown drive throws NotFoundException', () async {
     final dst = await TempDir.create();
     addTearDown(dst.cleanup);

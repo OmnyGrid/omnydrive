@@ -5,6 +5,7 @@ import '../enums/mount_type.dart';
 import '../enums/provider_type.dart';
 import '../value_objects/origin_uri.dart';
 import '../value_objects/local_path.dart';
+import '../value_objects/path_filter.dart';
 import '../value_objects/sync_ref.dart';
 import 'mounted_drive.dart';
 import 'synchronizer.dart';
@@ -20,11 +21,21 @@ abstract interface class DriveProvider {
   ProviderType get type;
 
   /// Inspects [origin] and produces a [Drive] description under [accessMode].
-  Future<Drive> describe(OriginUri origin, {required AccessMode accessMode});
+  ///
+  /// [filter] limits which sub-paths the resulting drive exposes (directory
+  /// drives only; ignored by providers that don't support sub-path filtering).
+  Future<Drive> describe(
+    OriginUri origin, {
+    required AccessMode accessMode,
+    PathFilter? filter,
+  });
 
   /// Computes the current reference of [origin] (git: branch/HEAD SHA;
   /// directory: manifest hash).
-  Future<SyncRef> currentRef(OriginUri origin);
+  ///
+  /// [filter] restricts the reference to the surviving sub-paths so it matches
+  /// what a filtered drive serves (directory drives only).
+  Future<SyncRef> currentRef(OriginUri origin, {PathFilter? filter});
 
   /// Materializes [drive] into [dest] as the given [mountType], returning the
   /// resulting [MountedDrive].

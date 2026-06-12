@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 
 import '../../../domain/contracts/content_source.dart';
 import '../../../domain/entities/file_manifest.dart';
+import '../../../domain/value_objects/path_filter.dart';
 import '../../../shared/errors/domain_exception.dart';
 import '../../../shared/errors/error_codes.dart';
 import 'manifest_builder.dart';
@@ -18,11 +19,16 @@ class LocalContentSource implements ContentSource {
 
   final ManifestBuilder _builder;
 
+  /// Creates a content source rooted at [root].
+  ///
+  /// When [filter] is supplied and no explicit [builder] is given, the manifest
+  /// walk applies the filter so only the surviving sub-paths are exposed.
   LocalContentSource(
     this.root, {
     this.isWritable = true,
-    ManifestBuilder builder = const ManifestBuilder(),
-  }) : _builder = builder;
+    PathFilter? filter,
+    ManifestBuilder? builder,
+  }) : _builder = builder ?? ManifestBuilder(filter: filter);
 
   @override
   Future<FileManifest> manifest() => _builder.build(root);

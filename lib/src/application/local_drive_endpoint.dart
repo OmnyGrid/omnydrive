@@ -20,6 +20,7 @@ import '../domain/value_objects/drive_id.dart';
 import '../domain/value_objects/local_path.dart';
 import '../domain/value_objects/mount_id.dart';
 import '../domain/value_objects/origin_uri.dart';
+import '../domain/value_objects/path_filter.dart';
 import '../infrastructure/persistence/in_memory_drive_registry.dart';
 import '../infrastructure/persistence/in_memory_mount_registry.dart';
 import '../infrastructure/persistence/in_memory_sync_state_store.dart';
@@ -93,11 +94,13 @@ class LocalDriveEndpoint implements DriveEndpoint {
     required String path,
     String? name,
     bool readOnly = false,
+    PathFilter? filter,
   }) => _publish(
     origin: OriginUri(path),
     provider: ProviderType.directory,
     name: name,
     readOnly: readOnly,
+    filter: filter,
   );
 
   @override
@@ -118,11 +121,12 @@ class LocalDriveEndpoint implements DriveEndpoint {
     required ProviderType provider,
     required String? name,
     required bool readOnly,
+    PathFilter? filter,
   }) async {
     final accessMode = readOnly ? AccessMode.readOnly : AccessMode.readWrite;
     final described = await providers
         .forType(provider)
-        .describe(origin, accessMode: accessMode);
+        .describe(origin, accessMode: accessMode, filter: filter);
     final drive = name == null ? described : _rename(described, name);
 
     // Git drives are fetched directly from their URL; directory drives are
@@ -150,6 +154,7 @@ class LocalDriveEndpoint implements DriveEndpoint {
     originUri: drive.originUri,
     accessMode: drive.accessMode,
     capabilities: drive.capabilities,
+    filter: drive.filter,
     createdAt: drive.createdAt,
   );
 
@@ -228,8 +233,14 @@ class LocalDriveEndpoint implements DriveEndpoint {
     // Decide direction from where each side sits relative to the baseline,
     // using the provider's own notion of a reference so the logic is identical
     // for directory (manifest hash) and git (commit sha) drives.
-    final localRef = await provider.currentRef(OriginUri(info.localPath.value));
-    final originRef = await provider.currentRef(syncDrive.originUri);
+    final localRef = await provider.currentRef(
+      OriginUri(info.localPath.value),
+      filter: syncDrive.filter,
+    );
+    final originRef = await provider.currentRef(
+      syncDrive.originUri,
+      filter: syncDrive.filter,
+    );
     final localChanged = localRef != baseline;
     final originChanged = originRef != baseline;
 
@@ -328,6 +339,7 @@ class LocalDriveEndpoint implements DriveEndpoint {
     originUri: origin,
     accessMode: accessMode,
     capabilities: drive.capabilities,
+    filter: drive.filter,
     createdAt: drive.createdAt,
   );
 

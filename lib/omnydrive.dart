@@ -37,6 +37,7 @@ export 'src/domain/value_objects/hub_id.dart';
 export 'src/domain/value_objects/mount_id.dart';
 export 'src/domain/value_objects/local_path.dart';
 export 'src/domain/value_objects/origin_uri.dart';
+export 'src/domain/value_objects/path_filter.dart';
 export 'src/domain/value_objects/sync_ref.dart';
 export 'src/domain/value_objects/content_hash.dart';
 export 'src/domain/value_objects/branch_name.dart';

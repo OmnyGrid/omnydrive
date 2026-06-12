@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import '../../../domain/entities/file_manifest.dart';
 import '../../../domain/entities/file_manifest_entry.dart';
 import '../../../domain/value_objects/content_hash.dart';
+import '../../../domain/value_objects/path_filter.dart';
 import 'manifest_cache.dart';
 
 /// Walks a directory tree and produces a content-addressed [FileManifest].
@@ -24,12 +25,17 @@ class ManifestBuilder {
   /// Directory names skipped during the walk.
   final Set<String> ignoredDirs;
 
+  /// Optional sub-path filter. When set, files whose relative path does not
+  /// survive the filter are excluded from the manifest (and never hashed).
+  final PathFilter? filter;
+
   /// When false, every file is read and hashed and no cache is consulted or
   /// written. Used by tests to compare cached vs. non-cached builds.
   final bool useCache;
 
   const ManifestBuilder({
     this.ignoredDirs = const {'.omnydrive', '.git', '.dart_tool'},
+    this.filter,
     this.useCache = true,
   });
 
@@ -54,6 +60,7 @@ class ManifestBuilder {
       final relative = p.relative(entity.path, from: rootPath);
       if (_isIgnored(relative)) continue;
       final posixPath = p.split(relative).join('/');
+      if (filter != null && !filter!.matches(posixPath)) continue;
 
       final stat = await entity.stat();
       final mtime = stat.modified.toUtc();

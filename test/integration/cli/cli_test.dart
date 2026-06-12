@@ -175,6 +175,75 @@ void main() {
     expect(File(p.join(s.dest, 'f.txt')).readAsStringSync(), 'local-change');
   });
 
+  test('publish --exclude is honored end-to-end over HTTP', () async {
+    await cli(stateA.path, [
+      'login',
+      '--hub',
+      hubUrl,
+      '--id',
+      'alpha',
+      '--serve-url',
+      contentUrl,
+    ]);
+
+    final src = await TempDir.create('omnydrive_cli_src_');
+    addTearDown(src.cleanup);
+    await src.writeFile('keep.txt', 'K');
+    await src.writeFile('secret/p.txt', 'P');
+
+    expect(
+      await cli(stateA.path, [
+        'publish',
+        src.path,
+        '--name',
+        'docs',
+        '--exclude',
+        'secret/**',
+      ]),
+      0,
+    );
+
+    await cli(stateB.path, [
+      'login',
+      '--hub',
+      hubUrl,
+      '--id',
+      'beta',
+      '--serve-url',
+      'http://beta.invalid',
+    ]);
+    final dest = p.join((await TempDir.create('omnydrive_cli_dst_')).path, 'm');
+    addTearDown(() => Directory(dest).parent.delete(recursive: true));
+
+    expect(await cli(stateB.path, ['clone', 'alpha/docs', dest]), 0);
+    // The whitelisted file is mirrored; the excluded sub-path never crosses
+    // the HTTP content server.
+    expect(File(p.join(dest, 'keep.txt')).readAsStringSync(), 'K');
+    expect(File(p.join(dest, 'secret/p.txt')).existsSync(), isFalse);
+  });
+
+  test('publish --exclude with --git is rejected (exit 1)', () async {
+    await cli(stateA.path, [
+      'login',
+      '--hub',
+      hubUrl,
+      '--id',
+      'alpha',
+      '--serve-url',
+      contentUrl,
+    ]);
+    expect(
+      await cli(stateA.path, [
+        'publish',
+        'https://example.com/repo.git',
+        '--git',
+        '--exclude',
+        'x/**',
+      ]),
+      1,
+    );
+  });
+
   test('commands without a login fail with exit code 1', () async {
     final empty = await TempDir.create('omnydrive_cli_empty_');
     addTearDown(empty.cleanup);

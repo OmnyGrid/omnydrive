@@ -10,6 +10,7 @@ import '../domain/entities/endpoint_identity.dart';
 import '../domain/value_objects/auth_token.dart';
 import '../domain/value_objects/capability.dart';
 import '../domain/value_objects/endpoint_id.dart';
+import '../domain/value_objects/path_filter.dart';
 import '../infrastructure/http/content_server.dart';
 import '../infrastructure/http/http_drive_hub.dart';
 import '../infrastructure/http/hub_server.dart';
@@ -262,6 +263,18 @@ class PublishCommand extends _BaseCommand {
         'read-only',
         negatable: false,
         help: 'Publish without allowing pushes.',
+      )
+      ..addMultiOption(
+        'include',
+        help:
+            'Only publish sub-paths matching this glob (repeatable). '
+            'Acts as a whitelist; e.g. --include "src/**".',
+      )
+      ..addMultiOption(
+        'exclude',
+        help:
+            'Exclude sub-paths matching this glob (repeatable). '
+            'Wins over --include; e.g. --exclude "**/*.tmp".',
       );
   }
 
@@ -279,8 +292,20 @@ class PublishCommand extends _BaseCommand {
     final endpoint = await loadEndpoint();
     final name = argResults!['name'] as String?;
     final readOnly = argResults!['read-only'] as bool;
+    final isGit = argResults!['git'] as bool;
+    final include = argResults!['include'] as List<String>;
+    final exclude = argResults!['exclude'] as List<String>;
 
-    final drive = argResults!['git'] as bool
+    if (isGit && (include.isNotEmpty || exclude.isNotEmpty)) {
+      throw const CliException(
+        '--include/--exclude only apply to directory drives, not --git.',
+      );
+    }
+    final filter = (include.isEmpty && exclude.isEmpty)
+        ? null
+        : PathFilter(include: include, exclude: exclude);
+
+    final drive = isGit
         ? await endpoint.publishGit(
             url: rest.first,
             name: name,
@@ -290,6 +315,7 @@ class PublishCommand extends _BaseCommand {
             path: p.absolute(rest.first),
             name: name,
             readOnly: readOnly,
+            filter: filter,
           );
 
     stdout.writeln('Published ${drive.id} (${drive.provider.wireValue}).');

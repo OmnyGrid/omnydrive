@@ -113,13 +113,15 @@ class ContentServer {
   }
 
   static ContentSource _localResolver(DriveRegistration registration) {
-    final origin = registration.drive.originUri;
+    final drive = registration.drive;
+    final origin = drive.originUri;
     final path = origin.scheme == OriginUriScheme.file
         ? Uri.parse(origin.value).toFilePath()
         : origin.value;
     return LocalContentSource(
       path,
-      isWritable: registration.drive.accessMode.isReadWrite,
+      isWritable: drive.accessMode.isReadWrite,
+      filter: drive.filter,
     );
   }
 
