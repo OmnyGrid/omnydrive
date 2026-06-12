@@ -6,6 +6,7 @@ import '../../domain/value_objects/endpoint_id.dart';
 import '../../domain/value_objects/origin_uri.dart';
 import '../../domain/value_objects/path_filter.dart';
 import '../../shared/utils/clock.dart';
+import '../../shared/utils/content_compression.dart';
 import '../providers/directory/directory_provider.dart';
 import '../providers/git/git_cli.dart';
 import '../providers/git/git_provider.dart';
@@ -20,6 +21,7 @@ ProviderRegistry networkedProviderRegistry({
   http.Client? client,
   GitCli git = const GitCli(),
   Clock? clock,
+  ContentCompression? compression,
 }) {
   final httpClient = client ?? HttpContentSource.defaultClient();
 
@@ -37,6 +39,7 @@ ProviderRegistry networkedProviderRegistry({
           origin.value,
           client: httpClient,
           isWritable: writable,
+          compression: compression,
         );
       default:
         return DirectoryProvider.localDirectoryResolver(

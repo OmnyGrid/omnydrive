@@ -10,6 +10,7 @@ import '../domain/value_objects/drive_id.dart';
 import '../domain/value_objects/endpoint_id.dart';
 import '../infrastructure/http/http_content_source.dart';
 import '../infrastructure/http/http_drive_hub.dart';
+import '../shared/utils/content_compression.dart';
 
 /// A thin, high-level client for talking to a running OmnyDrive hub and the
 /// endpoint content servers it routes to.
@@ -32,19 +33,30 @@ class OmnyClient {
   final HttpDriveHub _hub;
   final http.Client _http;
   final bool _ownsClient;
+  final ContentCompression _compression;
 
   /// Connects to the hub at [hubUrl]. When no [client] is supplied an
-  /// internally-owned [http.Client] is created and closed by [close].
-  factory OmnyClient(String hubUrl, {http.Client? client}) {
-    final shared = client ?? http.Client();
+  /// internally-owned client is created and closed by [close].
+  ///
+  /// The internal client disables transparent gzip auto-uncompress so content
+  /// reads decode deterministically (see [HttpContentSource.defaultClient]);
+  /// hub JSON responses are never compressed, so this is safe to share. Pass a
+  /// [compression] policy to tune or disable content compression.
+  factory OmnyClient(
+    String hubUrl, {
+    http.Client? client,
+    ContentCompression? compression,
+  }) {
+    final shared = client ?? HttpContentSource.defaultClient();
     return OmnyClient._(
       HttpDriveHub(hubUrl, client: shared),
       shared,
       client == null,
+      compression ?? ContentCompression.standard,
     );
   }
 
-  OmnyClient._(this._hub, this._http, this._ownsClient);
+  OmnyClient._(this._hub, this._http, this._ownsClient, this._compression);
 
   /// The underlying hub client, for advanced use.
   DriveHub get hub => _hub;
@@ -79,6 +91,7 @@ class OmnyClient {
     registration.serveUrl,
     client: _http,
     isWritable: writable,
+    compression: _compression,
   );
 
   /// Closes the shared HTTP client (only the one this instance created).

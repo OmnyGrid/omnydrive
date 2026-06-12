@@ -30,12 +30,20 @@ class HttpContentSource implements ContentSource {
 
   final http.Client _client;
 
+  /// The compression policy applied to writes and advertised on reads.
+  final ContentCompression _compression;
+
   @override
   final bool isWritable;
 
-  HttpContentSource(String base, {http.Client? client, this.isWritable = false})
-    : base = base.endsWith('/') ? base.substring(0, base.length - 1) : base,
-      _client = client ?? defaultClient();
+  HttpContentSource(
+    String base, {
+    http.Client? client,
+    this.isWritable = false,
+    ContentCompression? compression,
+  }) : base = base.endsWith('/') ? base.substring(0, base.length - 1) : base,
+       _client = client ?? defaultClient(),
+       _compression = compression ?? ContentCompression.standard;
 
   /// The client used when none is injected.
   ///
@@ -51,7 +59,7 @@ class HttpContentSource implements ContentSource {
   Future<FileManifest> manifest() async {
     final response = await _client.get(
       Uri.parse('$base/manifest'),
-      headers: _acceptGzip,
+      headers: _accept,
     );
     if (response.statusCode != 200) {
       throwApiError(response.statusCode, response.body);
@@ -64,7 +72,7 @@ class HttpContentSource implements ContentSource {
   Future<List<int>> readBytes(String relativePath) async {
     final response = await _client.get(
       _fileUri(relativePath),
-      headers: _acceptGzip,
+      headers: _accept,
     );
     if (response.statusCode != 200) {
       throwApiError(response.statusCode, response.body);
@@ -75,30 +83,36 @@ class HttpContentSource implements ContentSource {
   @override
   Future<void> writeBytes(String relativePath, List<int> bytes) async {
     _ensureWritable();
-    final headers =
-        ContentCompression.shouldCompress(relativePath, bytes.length)
-        ? const {'content-encoding': 'gzip'}
-        : null;
-    final body = headers != null ? ContentCompression.encode(bytes) : bytes;
+    final compress = _compression.shouldCompress(relativePath, bytes.length);
     final response = await _client.put(
       _fileUri(relativePath),
-      headers: headers,
-      body: body,
+      headers: compress ? const {'content-encoding': 'gzip'} : null,
+      body: compress ? _compression.encode(bytes) : bytes,
     );
     if (response.statusCode != 200 && response.statusCode != 204) {
       throwApiError(response.statusCode, response.body);
     }
   }
 
-  static const Map<String, String> _acceptGzip = {'accept-encoding': 'gzip'};
+  /// Only advertise gzip when this policy is enabled; a disabled policy asks the
+  /// server for plain bytes (and the magic-byte check below still decodes
+  /// anything that arrives gzipped anyway).
+  Map<String, String>? get _accept =>
+      _compression.enabled ? const {'accept-encoding': 'gzip'} : null;
 
-  /// Returns the response body bytes, gunzipping when the server still marks
-  /// them gzip-encoded. A client that transparently uncompresses (Dart's
-  /// default `IOClient`) strips the `content-encoding` header, so this no-ops.
-  List<int> _decoded(http.Response response) =>
-      ContentCompression.isGzip(response.headers['content-encoding'])
-      ? ContentCompression.decode(response.bodyBytes)
-      : response.bodyBytes;
+  /// Returns the response body bytes, gunzipping only when the server marked
+  /// them gzip-encoded **and** they still look like a gzip stream. This stays
+  /// correct regardless of the injected client: Dart's default `IOClient`
+  /// transparently uncompresses the body yet keeps the `content-encoding`
+  /// header, so keying on the header alone would double-decode — the magic-byte
+  /// check ([ContentCompression.looksGzipped]) guards against that.
+  List<int> _decoded(http.Response response) {
+    final bytes = response.bodyBytes;
+    return ContentCompression.isGzip(response.headers['content-encoding']) &&
+            ContentCompression.looksGzipped(bytes)
+        ? ContentCompression.decode(bytes)
+        : bytes;
+  }
 
   @override
   Future<void> delete(String relativePath) async {

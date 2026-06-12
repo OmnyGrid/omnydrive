@@ -31,9 +31,14 @@ typedef DriveContentResolver = ContentSource Function(DriveRegistration drive);
 class ContentServer {
   final DriveRegistry published;
   final DriveContentResolver _resolve;
+  final ContentCompression _compression;
 
-  ContentServer(this.published, {DriveContentResolver? resolveContent})
-    : _resolve = resolveContent ?? _localResolver;
+  ContentServer(
+    this.published, {
+    DriveContentResolver? resolveContent,
+    ContentCompression? compression,
+  }) : _resolve = resolveContent ?? _localResolver,
+       _compression = compression ?? ContentCompression.standard;
 
   Handler get handler {
     final router = Router()
@@ -62,9 +67,9 @@ class ContentServer {
     final bytes = utf8.encode(jsonEncode(manifest.toJson()));
     final headers = {'content-type': 'application/json; charset=utf-8'};
     if (ContentCompression.acceptsGzip(request.headers['accept-encoding']) &&
-        ContentCompression.shouldCompressBytes(bytes.length)) {
+        _compression.shouldCompressBytes(bytes.length)) {
       return Response.ok(
-        ContentCompression.encode(bytes),
+        _compression.encode(bytes),
         headers: {...headers, 'content-encoding': 'gzip'},
       );
     }
@@ -77,9 +82,9 @@ class ContentServer {
     final bytes = await source.readBytes(path);
     final headers = {'content-type': 'application/octet-stream'};
     if (ContentCompression.acceptsGzip(request.headers['accept-encoding']) &&
-        ContentCompression.shouldCompress(path, bytes.length)) {
+        _compression.shouldCompress(path, bytes.length)) {
       return Response.ok(
-        ContentCompression.encode(bytes),
+        _compression.encode(bytes),
         headers: {...headers, 'content-encoding': 'gzip'},
       );
     }

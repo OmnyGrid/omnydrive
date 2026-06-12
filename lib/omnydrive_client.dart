@@ -57,3 +57,6 @@ export 'src/domain/entities/file_manifest_entry.dart';
 export 'src/shared/errors/error_codes.dart';
 export 'src/shared/errors/domain_exception.dart';
 export 'src/shared/version.dart';
+
+// Compression policy (configurable; reusable by custom transports).
+export 'src/shared/utils/content_compression.dart';
