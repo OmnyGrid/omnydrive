@@ -1,10 +1,13 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 
 import '../../domain/contracts/content_source.dart';
 import '../../domain/entities/file_manifest.dart';
 import '../../shared/errors/domain_exception.dart';
+import '../../shared/utils/content_compression.dart';
 import 'api_errors.dart';
 
 /// A [ContentSource] backed by a remote endpoint's HTTP content server.
@@ -32,36 +35,70 @@ class HttpContentSource implements ContentSource {
 
   HttpContentSource(String base, {http.Client? client, this.isWritable = false})
     : base = base.endsWith('/') ? base.substring(0, base.length - 1) : base,
-      _client = client ?? http.Client();
+      _client = client ?? defaultClient();
+
+  /// The client used when none is injected.
+  ///
+  /// Auto-uncompress is disabled so gzip handling stays fully explicit: the
+  /// body arrives exactly as the server sent it, so a `content-encoding: gzip`
+  /// header reliably means the bytes are still compressed. (The default
+  /// `IOClient` decompresses transparently yet *keeps* the header, which makes
+  /// the body's state ambiguous.)
+  static http.Client defaultClient() =>
+      IOClient(HttpClient()..autoUncompress = false);
 
   @override
   Future<FileManifest> manifest() async {
-    final response = await _client.get(Uri.parse('$base/manifest'));
+    final response = await _client.get(
+      Uri.parse('$base/manifest'),
+      headers: _acceptGzip,
+    );
     if (response.statusCode != 200) {
       throwApiError(response.statusCode, response.body);
     }
-    return FileManifest.fromJson(
-      jsonDecode(response.body) as Map<String, dynamic>,
-    );
+    final json = utf8.decode(_decoded(response));
+    return FileManifest.fromJson(jsonDecode(json) as Map<String, dynamic>);
   }
 
   @override
   Future<List<int>> readBytes(String relativePath) async {
-    final response = await _client.get(_fileUri(relativePath));
+    final response = await _client.get(
+      _fileUri(relativePath),
+      headers: _acceptGzip,
+    );
     if (response.statusCode != 200) {
       throwApiError(response.statusCode, response.body);
     }
-    return response.bodyBytes;
+    return _decoded(response);
   }
 
   @override
   Future<void> writeBytes(String relativePath, List<int> bytes) async {
     _ensureWritable();
-    final response = await _client.put(_fileUri(relativePath), body: bytes);
+    final headers =
+        ContentCompression.shouldCompress(relativePath, bytes.length)
+        ? const {'content-encoding': 'gzip'}
+        : null;
+    final body = headers != null ? ContentCompression.encode(bytes) : bytes;
+    final response = await _client.put(
+      _fileUri(relativePath),
+      headers: headers,
+      body: body,
+    );
     if (response.statusCode != 200 && response.statusCode != 204) {
       throwApiError(response.statusCode, response.body);
     }
   }
+
+  static const Map<String, String> _acceptGzip = {'accept-encoding': 'gzip'};
+
+  /// Returns the response body bytes, gunzipping when the server still marks
+  /// them gzip-encoded. A client that transparently uncompresses (Dart's
+  /// default `IOClient`) strips the `content-encoding` header, so this no-ops.
+  List<int> _decoded(http.Response response) =>
+      ContentCompression.isGzip(response.headers['content-encoding'])
+      ? ContentCompression.decode(response.bodyBytes)
+      : response.bodyBytes;
 
   @override
   Future<void> delete(String relativePath) async {

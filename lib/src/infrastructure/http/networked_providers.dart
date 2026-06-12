@@ -21,7 +21,7 @@ ProviderRegistry networkedProviderRegistry({
   GitCli git = const GitCli(),
   Clock? clock,
 }) {
-  final httpClient = client ?? http.Client();
+  final httpClient = client ?? HttpContentSource.defaultClient();
 
   // The filter only bites on local directories; a remote `http(s)` origin is
   // already filtered server-side, so the parameter is ignored there.

@@ -1,3 +1,18 @@
+## 1.3.0
+
+- Performance: directory-drive content now transfers gzip-compressed over HTTP
+  by default. File pulls, file pushes and the JSON manifest are gzipped at level
+  4 (near-identical ratio to the default level 6, markedly faster) using
+  `dart:io`'s `GZipCodec` — no new dependency. Negotiation rides the standard
+  `Accept-Encoding` / `Content-Encoding` headers, so peers interoperate
+  transparently.
+  - Already-compressed file types (jpeg, png, mp4, zip, pdf, …) and payloads
+    below `ContentCompression.minBytes` (1 KiB) are sent verbatim, since
+    re-gzipping them costs CPU for no real gain.
+  - The content-source HTTP client disables transparent auto-uncompress so gzip
+    handling stays explicit and deterministic; `HttpContentSource` and
+    `networkedProviderRegistry` share a single client factory.
+
 ## 1.2.0
 
 - Feature: publish only part of a local directory with sub-path filters. A new

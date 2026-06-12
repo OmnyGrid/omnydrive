@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:shelf/shelf.dart';
@@ -14,6 +15,7 @@ import '../../domain/value_objects/origin_uri.dart';
 import '../../shared/errors/domain_exception.dart';
 import '../../shared/errors/error_codes.dart';
 import '../../shared/json/json_response.dart';
+import '../../shared/utils/content_compression.dart';
 import '../../shared/version.dart';
 import '../providers/directory/local_content_source.dart';
 
@@ -57,21 +59,39 @@ class ContentServer {
   Future<Response> _manifest(Request request) => _guard(() async {
     final source = await _sourceFor(request, writable: false);
     final manifest = await source.manifest();
-    return JsonResponse.rawJson(manifest.toJson());
+    final bytes = utf8.encode(jsonEncode(manifest.toJson()));
+    final headers = {'content-type': 'application/json; charset=utf-8'};
+    if (ContentCompression.acceptsGzip(request.headers['accept-encoding']) &&
+        ContentCompression.shouldCompressBytes(bytes.length)) {
+      return Response.ok(
+        ContentCompression.encode(bytes),
+        headers: {...headers, 'content-encoding': 'gzip'},
+      );
+    }
+    return Response.ok(bytes, headers: headers);
   });
 
   Future<Response> _readFile(Request request) => _guard(() async {
     final source = await _sourceFor(request, writable: false);
-    final bytes = await source.readBytes(request.params['path']!);
-    return Response.ok(
-      bytes,
-      headers: {'content-type': 'application/octet-stream'},
-    );
+    final path = request.params['path']!;
+    final bytes = await source.readBytes(path);
+    final headers = {'content-type': 'application/octet-stream'};
+    if (ContentCompression.acceptsGzip(request.headers['accept-encoding']) &&
+        ContentCompression.shouldCompress(path, bytes.length)) {
+      return Response.ok(
+        ContentCompression.encode(bytes),
+        headers: {...headers, 'content-encoding': 'gzip'},
+      );
+    }
+    return Response.ok(bytes, headers: headers);
   });
 
   Future<Response> _writeFile(Request request) => _guard(() async {
     final source = await _sourceFor(request, writable: true);
-    final bytes = await request.read().expand((c) => c).toList();
+    var bytes = await request.read().expand((c) => c).toList();
+    if (ContentCompression.isGzip(request.headers['content-encoding'])) {
+      bytes = ContentCompression.decode(bytes);
+    }
     await source.writeBytes(request.params['path']!, bytes);
     return JsonResponse.noContent();
   });
