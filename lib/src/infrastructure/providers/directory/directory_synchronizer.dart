@@ -12,6 +12,7 @@ import '../../../domain/value_objects/sync_ref.dart';
 import '../../../shared/errors/domain_exception.dart';
 import '../../../shared/observability/metrics.dart';
 import '../../../shared/observability/progress.dart';
+import '../../../shared/utils/concurrent.dart';
 
 /// Synchronizes a directory drive using manifest-hash references.
 ///
@@ -30,12 +31,16 @@ class DirectorySynchronizer implements Synchronizer {
   final ManifestDiffer _differ;
   final ConflictDetector _detector;
 
+  /// Maximum number of file transfers kept in flight at once during [apply].
+  final int transferConcurrency;
+
   DirectorySynchronizer({
     required this.drive,
     required this.resolveOrigin,
     required this.resolveLocal,
     ManifestDiffer differ = const ManifestDiffer(),
     ConflictDetector detector = const ConflictDetector(),
+    this.transferConcurrency = 8,
   }) : _differ = differ,
        _detector = detector;
 
@@ -92,7 +97,7 @@ class DirectorySynchronizer implements Synchronizer {
     final localManifest = await local.manifest();
     final originManifest = await origin.manifest();
 
-    var bytes = 0;
+    int bytes;
     int applied;
     SyncRef newRef;
 
@@ -106,84 +111,22 @@ class DirectorySynchronizer implements Synchronizer {
       if (conflict != null) throw ConflictDetectedException(conflict);
 
       final diff = _differ.diff(originManifest, localManifest);
-      final total = diff.allPaths.length;
-      var done = 0;
-      progress?.report(
-        ProgressEvent(
-          phase: ProgressPhase.transferring,
-          total: total,
-          completed: 0,
-        ),
+      bytes = await _transfer(
+        diff: diff,
+        source: local,
+        dest: origin,
+        progress: progress,
       );
-      for (final path in [...diff.added, ...diff.modified]) {
-        final data = await local.readBytes(path);
-        await origin.writeBytes(path, data);
-        bytes += data.length;
-        done++;
-        progress?.report(
-          ProgressEvent(
-            phase: ProgressPhase.transferring,
-            total: total,
-            completed: done,
-            bytes: bytes,
-            message: path,
-          ),
-        );
-      }
-      for (final path in diff.removed) {
-        await origin.delete(path);
-        done++;
-        progress?.report(
-          ProgressEvent(
-            phase: ProgressPhase.transferring,
-            total: total,
-            completed: done,
-            bytes: bytes,
-            message: path,
-          ),
-        );
-      }
       applied = diff.allPaths.length;
       newRef = (await origin.manifest()).hash();
     } else {
       final diff = _differ.diff(localManifest, originManifest);
-      final total = diff.allPaths.length;
-      var done = 0;
-      progress?.report(
-        ProgressEvent(
-          phase: ProgressPhase.transferring,
-          total: total,
-          completed: 0,
-        ),
+      bytes = await _transfer(
+        diff: diff,
+        source: origin,
+        dest: local,
+        progress: progress,
       );
-      for (final path in [...diff.added, ...diff.modified]) {
-        final data = await origin.readBytes(path);
-        await local.writeBytes(path, data);
-        bytes += data.length;
-        done++;
-        progress?.report(
-          ProgressEvent(
-            phase: ProgressPhase.transferring,
-            total: total,
-            completed: done,
-            bytes: bytes,
-            message: path,
-          ),
-        );
-      }
-      for (final path in diff.removed) {
-        await local.delete(path);
-        done++;
-        progress?.report(
-          ProgressEvent(
-            phase: ProgressPhase.transferring,
-            total: total,
-            completed: done,
-            bytes: bytes,
-            message: path,
-          ),
-        );
-      }
       applied = diff.allPaths.length;
       newRef = (await local.manifest()).hash();
     }
@@ -200,5 +143,56 @@ class DirectorySynchronizer implements Synchronizer {
         bytesTransferred: bytes,
       ),
     );
+  }
+
+  /// Copies [diff] from [source] to [dest], transferring up to
+  /// [transferConcurrency] files at once instead of one at a time. Returns the
+  /// total number of bytes written. Writes (added + modified) run first, then
+  /// deletes; per-file progress is reported as each operation settles.
+  Future<int> _transfer({
+    required ManifestDiff diff,
+    required ContentSource source,
+    required ContentSource dest,
+    ProgressReporter? progress,
+  }) async {
+    final total = diff.allPaths.length;
+    var done = 0;
+    var bytes = 0;
+    progress?.report(
+      ProgressEvent(
+        phase: ProgressPhase.transferring,
+        total: total,
+        completed: 0,
+      ),
+    );
+
+    // Counters below are mutated from concurrent worker callbacks; this is safe
+    // because Dart's event loop runs them on a single thread without preemption.
+    void reportDone(String path) {
+      done++;
+      progress?.report(
+        ProgressEvent(
+          phase: ProgressPhase.transferring,
+          total: total,
+          completed: done,
+          bytes: bytes,
+          message: path,
+        ),
+      );
+    }
+
+    await forEachConcurrent([...diff.added, ...diff.modified], (path) async {
+      final data = await source.readBytes(path);
+      await dest.writeBytes(path, data);
+      bytes += data.length;
+      reportDone(path);
+    }, concurrency: transferConcurrency);
+
+    await forEachConcurrent(diff.removed, (path) async {
+      await dest.delete(path);
+      reportDone(path);
+    }, concurrency: transferConcurrency);
+
+    return bytes;
   }
 }

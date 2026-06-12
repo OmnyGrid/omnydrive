@@ -1,3 +1,15 @@
+## 1.1.3
+
+- Performance: directory drive sync now transfers changed files concurrently
+  instead of one at a time. `DirectorySynchronizer` runs up to
+  `transferConcurrency` (default 8) reads/writes in flight over the existing
+  per-file content routes, so syncs dominated by per-file HTTP round-trips are
+  substantially faster. Conflict detection, baseline checks, and progress
+  reporting are unchanged. The limit is configurable via the
+  `DirectorySynchronizer` constructor.
+  - Added `forEachConcurrent` bounded worker-pool helper
+    (`lib/src/shared/utils/concurrent.dart`).
+
 ## 1.1.2
 
 - Fixed: syncing a mount could silently delete local-only changes. A pull
