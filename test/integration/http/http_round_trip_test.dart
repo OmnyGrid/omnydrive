@@ -262,6 +262,87 @@ void main() {
     expect(response.statusCode, 200);
   });
 
+  test(
+    'the content server advertises the server-side-copy capability',
+    () async {
+      final request = await HttpClient().getUrl(
+        Uri.parse('$contentUrl/version'),
+      );
+      final response = await request.close();
+      expect(response.statusCode, 200);
+      final body = await response.transform(utf8.decoder).join();
+      final json = jsonDecode(body) as Map<String, dynamic>;
+      final data = json['data'] as Map<String, dynamic>;
+      expect(data['capabilities'], contains('server-side-copy'));
+    },
+  );
+
+  test('duplicate content clones intact over HTTP', () async {
+    final src = await TempDir.create();
+    addTearDown(src.cleanup);
+    // The same content lives in the project and its build dir.
+    await src.writeFile('src/lib.js', 'shared build artifact');
+    await src.writeFile('build/lib.js', 'shared build artifact');
+    final drive = await publisher.publishDirectory(
+      path: src.path,
+      name: 'docs',
+    );
+
+    final dst = await TempDir.create();
+    addTearDown(dst.cleanup);
+    final dest = dst.resolve('mirror');
+    await cloner.cloneDrive(driveId: drive.id.value, dest: dest);
+
+    expect(
+      File('$dest/src/lib.js').readAsStringSync(),
+      'shared build artifact',
+    );
+    expect(
+      File('$dest/build/lib.js').readAsStringSync(),
+      'shared build artifact',
+    );
+  });
+
+  test('duplicate content pushes back correctly over HTTP', () async {
+    final src = await TempDir.create();
+    addTearDown(src.cleanup);
+    await src.writeFile('readme.md', 'hello');
+    final drive = await publisher.publishDirectory(
+      path: src.path,
+      name: 'docs',
+    );
+
+    final dst = await TempDir.create();
+    addTearDown(dst.cleanup);
+    final dest = dst.resolve('mirror');
+    final mount = await cloner.cloneDrive(driveId: drive.id.value, dest: dest);
+
+    // Two new files with identical content: the push uploads the bytes once and
+    // the origin copies them to the second path via the server-side copy route.
+    await File('$dest/a/shared.bin').create(recursive: true);
+    await File('$dest/a/shared.bin').writeAsString('duplicated payload');
+    await File('$dest/b/shared.bin').create(recursive: true);
+    await File('$dest/b/shared.bin').writeAsString('duplicated payload');
+
+    final result = await cloner.syncMount(mount.id.value);
+    expect(result.status, SyncStatus.clean);
+    expect(
+      File('${src.path}/a/shared.bin').readAsStringSync(),
+      'duplicated payload',
+    );
+    expect(
+      File('${src.path}/b/shared.bin').readAsStringSync(),
+      'duplicated payload',
+    );
+    // The dedup fired over the wire: the shared content was uploaded once and
+    // the origin copied it to the second path, so only one payload's worth of
+    // bytes crossed the network.
+    expect(
+      result.metrics.bytesTransferred,
+      equals('duplicated payload'.length),
+    );
+  });
+
   group('transfer compression', () {
     // A raw client that does NOT auto-decompress, so we can inspect what the
     // content server actually puts on the wire.

@@ -1,9 +1,11 @@
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
 import '../../../domain/contracts/content_source.dart';
 import '../../../domain/entities/file_manifest.dart';
+import '../../../domain/value_objects/content_hash.dart';
 import '../../../domain/value_objects/path_filter.dart';
 import '../../../shared/errors/domain_exception.dart';
 import '../../../shared/errors/error_codes.dart';
@@ -58,6 +60,30 @@ class LocalContentSource implements ContentSource {
     _ensureWritable();
     final file = File(_resolve(relativePath));
     if (await file.exists()) await file.delete();
+  }
+
+  @override
+  Future<bool> supportsCopy() async => isWritable;
+
+  @override
+  Future<bool> copy(
+    String fromPath,
+    String toPath,
+    ContentHash expectedHash,
+  ) async {
+    _ensureWritable();
+    final from = File(_resolve(fromPath));
+    if (!await from.exists()) return false;
+    final bytes = await from.readAsBytes();
+    // Verify the source still holds the expected content before reusing it: the
+    // file may have changed between manifest build and this copy.
+    final actual = ContentHash(hex: sha256.convert(bytes).toString());
+    if (actual != expectedHash) return false;
+    final to = File(_resolve(toPath));
+    await to.parent.create(recursive: true);
+    // Reuse the bytes already read for hashing rather than a second disk read.
+    await to.writeAsBytes(bytes, flush: true);
+    return true;
   }
 
   void _ensureWritable() {

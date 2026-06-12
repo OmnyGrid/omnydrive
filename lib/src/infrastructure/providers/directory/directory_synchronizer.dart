@@ -8,6 +8,7 @@ import '../../../domain/entities/sync_result.dart';
 import '../../../domain/enums/sync_status.dart';
 import '../../../domain/services/conflict_detector.dart';
 import '../../../domain/services/manifest_differ.dart';
+import '../../../domain/value_objects/content_hash.dart';
 import '../../../domain/value_objects/sync_ref.dart';
 import '../../../shared/errors/domain_exception.dart';
 import '../../../shared/observability/metrics.dart';
@@ -115,6 +116,8 @@ class DirectorySynchronizer implements Synchronizer {
         diff: diff,
         source: local,
         dest: origin,
+        sourceManifest: localManifest,
+        destManifest: originManifest,
         progress: progress,
       );
       applied = diff.allPaths.length;
@@ -125,6 +128,8 @@ class DirectorySynchronizer implements Synchronizer {
         diff: diff,
         source: origin,
         dest: local,
+        sourceManifest: originManifest,
+        destManifest: localManifest,
         progress: progress,
       );
       applied = diff.allPaths.length;
@@ -149,10 +154,20 @@ class DirectorySynchronizer implements Synchronizer {
   /// [transferConcurrency] files at once instead of one at a time. Returns the
   /// total number of bytes written. Writes (added + modified) run first, then
   /// deletes; per-file progress is reported as each operation settles.
+  ///
+  /// When the destination supports an in-place [ContentSource.copy], writes
+  /// whose content hash is already present at the destination — or is about to
+  /// be written this run — are deduplicated: the bytes are sent once and the
+  /// destination copies them to the remaining paths. [sourceManifest] supplies
+  /// each write path's expected hash; [destManifest] is the destination's
+  /// existing content. Only the bytes actually sent over the wire are counted,
+  /// so the return value reflects the saved traffic.
   Future<int> _transfer({
     required ManifestDiff diff,
     required ContentSource source,
     required ContentSource dest,
+    required FileManifest sourceManifest,
+    required FileManifest destManifest,
     ProgressReporter? progress,
   }) async {
     final total = diff.allPaths.length;
@@ -181,11 +196,56 @@ class DirectorySynchronizer implements Synchronizer {
       );
     }
 
-    await forEachConcurrent([...diff.added, ...diff.modified], (path) async {
+    final writes = [...diff.added, ...diff.modified];
+
+    // Split writes into byte transfers and in-place copies. A copy reuses
+    // content already at the destination — either a pre-existing file or the
+    // first file of the same content hash sent this run (its representative).
+    final transfers = <String>[];
+    final copies = <({String from, String to, ContentHash hash})>[];
+
+    if (dest.isWritable && await dest.supportsCopy()) {
+      final existingByHash = <String, String>{};
+      for (final path in destManifest.sortedPaths) {
+        existingByHash.putIfAbsent(
+          destManifest.entries[path]!.hash.value,
+          () => path,
+        );
+      }
+      final repByHash = <String, String>{};
+      for (final path in writes) {
+        final hash = sourceManifest.entries[path]!.hash;
+        final reuse = existingByHash[hash.value] ?? repByHash[hash.value];
+        if (reuse != null) {
+          copies.add((from: reuse, to: path, hash: hash));
+        } else {
+          repByHash[hash.value] = path;
+          transfers.add(path);
+        }
+      }
+    } else {
+      transfers.addAll(writes);
+    }
+
+    // Phase 1: send the representative byte payloads. These must all settle
+    // before phase 2 so every copy's source is guaranteed present at the dest.
+    await forEachConcurrent(transfers, (path) async {
       final data = await source.readBytes(path);
       await dest.writeBytes(path, data);
       bytes += data.length;
       reportDone(path);
+    }, concurrency: transferConcurrency);
+
+    // Phase 2: reuse content already at the dest. A false result means the
+    // source drifted or vanished, so fall back to a full transfer for that path.
+    await forEachConcurrent(copies, (op) async {
+      final copied = await dest.copy(op.from, op.to, op.hash);
+      if (!copied) {
+        final data = await source.readBytes(op.to);
+        await dest.writeBytes(op.to, data);
+        bytes += data.length;
+      }
+      reportDone(op.to);
     }, concurrency: transferConcurrency);
 
     await forEachConcurrent(diff.removed, (path) async {

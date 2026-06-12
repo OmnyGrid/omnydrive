@@ -12,3 +12,6 @@ pubspec.lock
 
 build/
 tmp/
+
+# Runtime manifest cache written by the CLI/content server.
+.omnydrive/

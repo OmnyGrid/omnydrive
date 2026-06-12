@@ -1,3 +1,23 @@
+## 1.4.0
+
+- Performance: directory-drive sync now deduplicates identical content instead
+  of transferring it repeatedly. When a write's content hash is already present
+  at the destination — either in an existing file or in another file sent the
+  same run — the bytes cross the wire once and the destination copies them into
+  place. Duplicate build artifacts, vendored files and the like sync for the
+  cost of a single payload.
+  - New `POST /drives/<endpoint>/<name>/copy` content-server route performs a
+    verified in-place copy: it re-hashes the source and returns `409` if it
+    drifted or vanished, so the client transparently falls back to a full byte
+    transfer (guarding the time-of-check/time-of-use gap).
+  - The content server advertises a `server-side-copy` capability in its
+    `GET /version` response. Clients probe for it once per transfer; servers
+    that don't advertise it (older versions) fall back to full byte transfers,
+    so peers interoperate transparently.
+  - API: `ContentSource` gains `supportsCopy()` and
+    `copy(from, to, expectedHash)`; implemented by `LocalContentSource` and
+    `HttpContentSource`.
+
 ## 1.3.0
 
 - Performance: directory-drive content now transfers gzip-compressed over HTTP
