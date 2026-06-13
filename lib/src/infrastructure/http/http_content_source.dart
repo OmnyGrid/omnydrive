@@ -87,13 +87,39 @@ class HttpContentSource implements ContentSource {
   }
 
   @override
-  Future<void> writeBytes(String relativePath, List<int> bytes) async {
+  Future<void> writeBytes(
+    String relativePath,
+    List<int> bytes, {
+    void Function(int sent, int total)? onProgress,
+  }) async {
     _ensureWritable();
     final compress = _compression.shouldCompress(relativePath, bytes.length);
-    final response = await _client.put(
+    final payload = compress ? _compression.encode(bytes) : bytes;
+
+    if (onProgress == null) {
+      final response = await _client.put(
+        _fileUri(relativePath),
+        headers: compress ? const {'content-encoding': 'gzip'} : null,
+        body: payload,
+      );
+      if (response.statusCode != 200 && response.statusCode != 204) {
+        throwApiError(response.statusCode, response.body);
+      }
+      return;
+    }
+
+    // Stream the (already-encoded) payload so progress reflects the wire size.
+    // The request yields chunks on demand, so [onProgress] tracks the socket's
+    // own pace rather than how fast we can buffer.
+    final request = _ProgressUpload(
+      'PUT',
       _fileUri(relativePath),
-      headers: compress ? const {'content-encoding': 'gzip'} : null,
-      body: compress ? _compression.encode(bytes) : bytes,
+      payload,
+      onProgress,
+    );
+    if (compress) request.headers['content-encoding'] = 'gzip';
+    final response = await http.Response.fromStream(
+      await _client.send(request),
     );
     if (response.statusCode != 200 && response.statusCode != 204) {
       throwApiError(response.statusCode, response.body);
@@ -196,5 +222,38 @@ class HttpContentSource implements ContentSource {
         .map(Uri.encodeComponent)
         .join('/');
     return Uri.parse('$base/files/$segments');
+  }
+}
+
+/// A PUT request whose body is fed from an in-memory buffer in chunks, invoking
+/// a callback as each chunk is pulled by the HTTP client. Because the chunks are
+/// yielded on demand, the reported byte count follows the socket's actual drain
+/// rate rather than how fast the buffer can be enqueued.
+class _ProgressUpload extends http.BaseRequest {
+  static const _chunkSize = 64 * 1024;
+
+  final List<int> _payload;
+  final void Function(int sent, int total) _onProgress;
+
+  _ProgressUpload(super.method, super.url, this._payload, this._onProgress) {
+    contentLength = _payload.length;
+  }
+
+  @override
+  http.ByteStream finalize() {
+    super.finalize();
+    return http.ByteStream(_chunks());
+  }
+
+  Stream<List<int>> _chunks() async* {
+    final total = _payload.length;
+    var sent = 0;
+    _onProgress(0, total);
+    while (sent < total) {
+      final end = sent + _chunkSize < total ? sent + _chunkSize : total;
+      yield _payload.sublist(sent, end);
+      sent = end;
+      _onProgress(sent, total);
+    }
   }
 }

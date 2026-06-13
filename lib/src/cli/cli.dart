@@ -21,6 +21,7 @@ import '../infrastructure/persistence/file/file_sync_state_store.dart';
 import '../shared/errors/domain_exception.dart';
 import '../shared/version.dart';
 import 'endpoint_config.dart';
+import 'sync_progress.dart';
 
 /// A user-facing CLI error that maps to a clean message and exit code 1,
 /// without a stack trace.
@@ -358,6 +359,15 @@ class CloneCommand extends _BaseCommand {
 }
 
 class SyncCommand extends _BaseCommand {
+  SyncCommand() {
+    argParser.addFlag(
+      'verbose',
+      abbr: 'v',
+      negatable: false,
+      help: 'List every transferred/copied/removed path in the final report.',
+    );
+  }
+
   @override
   String get name => 'sync';
   @override
@@ -370,14 +380,14 @@ class SyncCommand extends _BaseCommand {
       throw const CliException('Usage: omnydrive sync <mountId>');
     }
     final endpoint = await loadEndpoint();
-    final result = await endpoint.syncMount(rest.first);
-    final branch = result.publishedBranch == null
-        ? ''
-        : ' (branch ${result.publishedBranch})';
-    stdout.writeln(
-      'Synced: ${result.appliedChanges} change(s), '
-      'now at ${result.newRef}$branch.',
+    final renderer = SyncProgressRenderer(
+      verbose: argResults!['verbose'] as bool,
     );
+    final result = await endpoint.syncMount(
+      rest.first,
+      progress: renderer.reporter,
+    );
+    renderer.printReport(result);
     return 0;
   }
 }

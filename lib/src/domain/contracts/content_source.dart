@@ -13,7 +13,16 @@ abstract interface class ContentSource {
 
   /// Writes [bytes] to [relativePath], creating parents as needed.
   /// Throws if the source is read-only.
-  Future<void> writeBytes(String relativePath, List<int> bytes);
+  ///
+  /// When [onProgress] is supplied it is invoked as the write streams, with the
+  /// number of bytes flushed so far and the total to write. For transports that
+  /// compress the payload, both figures are the compressed (wire) size, so a
+  /// caller can derive a faithful fraction without knowing the encoding.
+  Future<void> writeBytes(
+    String relativePath,
+    List<int> bytes, {
+    void Function(int sent, int total)? onProgress,
+  });
 
   /// Deletes the file at [relativePath] if it exists.
   Future<void> delete(String relativePath);

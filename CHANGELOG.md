@@ -1,3 +1,28 @@
+## 1.5.0
+
+- Live sync progress: directory-drive sync now reports per-file upload progress
+  as bytes stream, so a TUI/CLI can draw a live progress bar for each of the
+  concurrent uploads instead of only learning a file is done after it settles.
+  - `ProgressEvent` gains per-item fields: `path`, `itemKind`
+    (`transferred`/`copied`/`removed`), `itemState`
+    (`started`/`progress`/`completed`), `itemBytes` and `itemTotalBytes` (the
+    wire/compressed size), plus `itemSize` (the original uncompressed file size,
+    so the real size can be shown alongside compressed progress).
+  - `ContentSource.writeBytes` gains an optional `onProgress(sent, total)`
+    callback. `HttpContentSource` uploads through a streamed request that reports
+    bytes at the socket's own pace; `LocalContentSource` streams via `openWrite`.
+  - Each completed path is tagged transferred vs copied (deduplicated), so the
+    distinction is visible during and after the sync.
+- Final sync report: `SyncMetrics` now carries `transferredPaths`, `copiedPaths`
+  and `removedPaths`, plus `bytesOnWire` (bytes after transport compression)
+  alongside the existing raw `bytesTransferred`.
+- `DriveEndpoint.syncMount` accepts an optional `progress` reporter.
+- CLI: `omnydrive sync` renders a live multi-bar transfer view and prints a final
+  report (file counts and raw vs on-wire bytes). Pass `-v`/`--verbose` to list
+  every transferred/copied/removed path.
+- The `omnyDriveVersion` constant (surfaced by `GET /version`) is realigned with
+  `pubspec.yaml` after drifting in prior releases.
+
 ## 1.4.0
 
 - Performance: directory-drive sync now deduplicates identical content instead

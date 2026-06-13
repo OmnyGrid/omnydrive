@@ -238,7 +238,9 @@ void main() {
 
     final perFile = events
         .where(
-          (e) => e.phase == ProgressPhase.transferring && e.message.isNotEmpty,
+          (e) =>
+              e.phase == ProgressPhase.transferring &&
+              e.itemState == ProgressItemState.completed,
         )
         .toList();
     expect(perFile, hasLength(3));
@@ -300,7 +302,9 @@ void main() {
 
     final perFile = events
         .where(
-          (e) => e.phase == ProgressPhase.transferring && e.message.isNotEmpty,
+          (e) =>
+              e.phase == ProgressPhase.transferring &&
+              e.itemState == ProgressItemState.completed,
         )
         .toList();
     expect(perFile, hasLength(3));
