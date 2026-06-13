@@ -87,6 +87,22 @@ void main() {
       final a = m({'x': 'aa'});
       expect(differ.diff(a, a).isEmpty, isTrue);
     });
+
+    test('an executable-bit change counts as modified', () {
+      FileManifest withExec(bool exec) => FileManifest({
+        'run.sh': FileManifestEntry(
+          path: 'run.sh',
+          size: 1,
+          hash: ContentHash(hex: 'aa'),
+          executable: exec,
+        ),
+      });
+      // Identical content, only the exec bit flips — must still be reported.
+      final diff = differ.diff(withExec(false), withExec(true));
+      expect(diff.modified, ['run.sh']);
+      expect(diff.added, isEmpty);
+      expect(diff.removed, isEmpty);
+    });
   });
 
   group('CapabilityNegotiator', () {

@@ -100,7 +100,11 @@ class ContentServer {
     if (ContentCompression.isGzip(request.headers['content-encoding'])) {
       bytes = ContentCompression.decode(bytes);
     }
-    await source.writeBytes(request.params['path']!, bytes);
+    await source.writeBytes(
+      request.params['path']!,
+      bytes,
+      executable: request.headers[executableHeader] == '1',
+    );
     return JsonResponse.noContent();
   });
 
@@ -116,6 +120,7 @@ class ContentServer {
       body['from'] as String,
       body['to'] as String,
       ContentHash.parse(body['hash'] as String),
+      executable: body['executable'] == true,
     );
     if (!copied) {
       return Response(409, body: 'copy source no longer matches expected hash');

@@ -64,6 +64,9 @@ class ManifestBuilder {
 
       final stat = await entity.stat();
       final mtime = stat.modified.toUtc();
+      // Any POSIX execute bit (user/group/other, 0o111). Zero on platforms
+      // without execute bits, so non-POSIX builds simply record `false`.
+      final executable = (stat.mode & 0x49) != 0;
 
       final cached = oldCache.lookup(posixPath);
       final ContentHash hash;
@@ -89,6 +92,7 @@ class ManifestBuilder {
         size: size,
         hash: hash,
         mtime: mtime,
+        executable: executable,
       );
       newCacheEntries[posixPath] = CachedEntry(
         size: size,

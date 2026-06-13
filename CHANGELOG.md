@@ -1,3 +1,13 @@
+## 1.8.0
+
+- Directory sync now preserves the executable (`+x`) bit. `FileManifestEntry`
+  records whether a file carries a POSIX execute bit (serialized as
+  `executable`, kept out of the content-addressed manifest hash), and the
+  destination applies `chmod +x` on write/copy. The manifest differ compares the
+  bit explicitly, so a chmod-only change (identical content) still syncs. No-op
+  on platforms without execute bits; existing directory references are
+  unaffected.
+
 ## 1.7.0
 
 - `PathFilter` now matches slash-less patterns at **any depth**, matching

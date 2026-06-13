@@ -90,16 +90,21 @@ class HttpContentSource implements ContentSource {
   Future<void> writeBytes(
     String relativePath,
     List<int> bytes, {
+    bool executable = false,
     void Function(int sent, int total)? onProgress,
   }) async {
     _ensureWritable();
     final compress = _compression.shouldCompress(relativePath, bytes.length);
     final payload = compress ? _compression.encode(bytes) : bytes;
+    final writeHeaders = <String, String>{
+      if (compress) 'content-encoding': 'gzip',
+      if (executable) executableHeader: '1',
+    };
 
     if (onProgress == null) {
       final response = await _client.put(
         _fileUri(relativePath),
-        headers: compress ? const {'content-encoding': 'gzip'} : null,
+        headers: writeHeaders.isEmpty ? null : writeHeaders,
         body: payload,
       );
       if (response.statusCode != 200 && response.statusCode != 204) {
@@ -117,7 +122,7 @@ class HttpContentSource implements ContentSource {
       payload,
       onProgress,
     );
-    if (compress) request.headers['content-encoding'] = 'gzip';
+    request.headers.addAll(writeHeaders);
     final response = await http.Response.fromStream(
       await _client.send(request),
     );
@@ -187,8 +192,9 @@ class HttpContentSource implements ContentSource {
   Future<bool> copy(
     String fromPath,
     String toPath,
-    ContentHash expectedHash,
-  ) async {
+    ContentHash expectedHash, {
+    bool executable = false,
+  }) async {
     _ensureWritable();
     final response = await _client.post(
       Uri.parse('$base/copy'),
@@ -197,6 +203,7 @@ class HttpContentSource implements ContentSource {
         'from': fromPath,
         'to': toPath,
         'hash': expectedHash.value,
+        if (executable) 'executable': true,
       }),
     );
     if (response.statusCode == 200 || response.statusCode == 204) return true;

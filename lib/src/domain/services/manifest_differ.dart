@@ -5,7 +5,7 @@ class ManifestDiff {
   /// Paths present in the target but not the base.
   final List<String> added;
 
-  /// Paths present in both but with different content.
+  /// Paths present in both but with different content or executable bit.
   final List<String> modified;
 
   /// Paths present in the base but not the target.
@@ -38,7 +38,11 @@ class ManifestDiffer {
       final after = target.entries[path]!;
       if (before == null) {
         added.add(path);
-      } else if (before.hash != after.hash) {
+      } else if (before.hash != after.hash ||
+          before.executable != after.executable) {
+        // Content hash is the primary signal; the executable bit is compared
+        // explicitly (it is excluded from the content-addressed manifest hash)
+        // so a chmod-only change still propagates.
         modified.add(path);
       }
     }
