@@ -98,7 +98,7 @@ class DirectorySynchronizer implements Synchronizer {
     final localManifest = await local.manifest();
     final originManifest = await origin.manifest();
 
-    int bytes;
+    _TransferTally tally;
     int applied;
     SyncRef newRef;
 
@@ -112,7 +112,7 @@ class DirectorySynchronizer implements Synchronizer {
       if (conflict != null) throw ConflictDetectedException(conflict);
 
       final diff = _differ.diff(originManifest, localManifest);
-      bytes = await _transfer(
+      tally = await _transfer(
         diff: diff,
         source: local,
         dest: origin,
@@ -124,7 +124,7 @@ class DirectorySynchronizer implements Synchronizer {
       newRef = (await origin.manifest()).hash();
     } else {
       final diff = _differ.diff(localManifest, originManifest);
-      bytes = await _transfer(
+      tally = await _transfer(
         diff: diff,
         source: origin,
         dest: local,
@@ -145,7 +145,11 @@ class DirectorySynchronizer implements Synchronizer {
       metrics: SyncMetrics(
         duration: stopwatch.elapsed,
         filesChanged: applied,
-        bytesTransferred: bytes,
+        bytesTransferred: tally.rawBytes,
+        bytesOnWire: tally.wireBytes,
+        transferredPaths: tally.transferred,
+        copiedPaths: tally.copied,
+        removedPaths: tally.removed,
       ),
     );
   }
@@ -162,7 +166,7 @@ class DirectorySynchronizer implements Synchronizer {
   /// each write path's expected hash; [destManifest] is the destination's
   /// existing content. Only the bytes actually sent over the wire are counted,
   /// so the return value reflects the saved traffic.
-  Future<int> _transfer({
+  Future<_TransferTally> _transfer({
     required ManifestDiff diff,
     required ContentSource source,
     required ContentSource dest,
@@ -171,8 +175,8 @@ class DirectorySynchronizer implements Synchronizer {
     ProgressReporter? progress,
   }) async {
     final total = diff.allPaths.length;
+    final tally = _TransferTally();
     var done = 0;
-    var bytes = 0;
     progress?.report(
       ProgressEvent(
         phase: ProgressPhase.transferring,
@@ -183,17 +187,80 @@ class DirectorySynchronizer implements Synchronizer {
 
     // Counters below are mutated from concurrent worker callbacks; this is safe
     // because Dart's event loop runs them on a single thread without preemption.
-    void reportDone(String path) {
+    int? sizeOf(String path) => sourceManifest.entries[path]?.size;
+
+    void reportStart(String path, ProgressItemKind kind, {int? wireTotal}) {
+      progress?.report(
+        ProgressEvent(
+          phase: ProgressPhase.transferring,
+          total: total,
+          completed: done,
+          bytes: tally.rawBytes,
+          message: path,
+          path: path,
+          itemKind: kind,
+          itemState: ProgressItemState.started,
+          itemBytes: 0,
+          itemTotalBytes: wireTotal ?? sizeOf(path),
+          itemSize: sizeOf(path),
+        ),
+      );
+    }
+
+    void reportItemProgress(String path, int sent, int wireTotal) {
+      progress?.report(
+        ProgressEvent(
+          phase: ProgressPhase.transferring,
+          total: total,
+          completed: done,
+          bytes: tally.rawBytes,
+          message: path,
+          path: path,
+          itemKind: ProgressItemKind.transferred,
+          itemState: ProgressItemState.progress,
+          itemBytes: sent,
+          itemTotalBytes: wireTotal,
+          itemSize: sizeOf(path),
+        ),
+      );
+    }
+
+    void reportDone(String path, ProgressItemKind kind, {int? wireTotal}) {
       done++;
       progress?.report(
         ProgressEvent(
           phase: ProgressPhase.transferring,
           total: total,
           completed: done,
-          bytes: bytes,
+          bytes: tally.rawBytes,
           message: path,
+          path: path,
+          itemKind: kind,
+          itemState: ProgressItemState.completed,
+          itemTotalBytes: wireTotal ?? sizeOf(path),
+          itemSize: sizeOf(path),
         ),
       );
+    }
+
+    // Uploads [path]'s bytes to the destination, streaming per-file progress and
+    // recording the raw and wire (post-compression) byte counts in the tally.
+    Future<void> transfer(String path) async {
+      final data = await source.readBytes(path);
+      reportStart(path, ProgressItemKind.transferred);
+      var wireTotal = data.length;
+      await dest.writeBytes(
+        path,
+        data,
+        onProgress: (sent, t) {
+          wireTotal = t;
+          reportItemProgress(path, sent, t);
+        },
+      );
+      tally.transferred.add(path);
+      tally.rawBytes += data.length;
+      tally.wireBytes += wireTotal;
+      reportDone(path, ProgressItemKind.transferred, wireTotal: wireTotal);
     }
 
     final writes = [...diff.added, ...diff.modified];
@@ -229,30 +296,42 @@ class DirectorySynchronizer implements Synchronizer {
 
     // Phase 1: send the representative byte payloads. These must all settle
     // before phase 2 so every copy's source is guaranteed present at the dest.
-    await forEachConcurrent(transfers, (path) async {
-      final data = await source.readBytes(path);
-      await dest.writeBytes(path, data);
-      bytes += data.length;
-      reportDone(path);
-    }, concurrency: transferConcurrency);
+    await forEachConcurrent(
+      transfers,
+      transfer,
+      concurrency: transferConcurrency,
+    );
 
     // Phase 2: reuse content already at the dest. A false result means the
     // source drifted or vanished, so fall back to a full transfer for that path.
     await forEachConcurrent(copies, (op) async {
+      reportStart(op.to, ProgressItemKind.copied);
       final copied = await dest.copy(op.from, op.to, op.hash);
-      if (!copied) {
-        final data = await source.readBytes(op.to);
-        await dest.writeBytes(op.to, data);
-        bytes += data.length;
+      if (copied) {
+        tally.copied.add(op.to);
+        reportDone(op.to, ProgressItemKind.copied);
+      } else {
+        await transfer(op.to);
       }
-      reportDone(op.to);
     }, concurrency: transferConcurrency);
 
     await forEachConcurrent(diff.removed, (path) async {
       await dest.delete(path);
-      reportDone(path);
+      tally.removed.add(path);
+      reportDone(path, ProgressItemKind.removed);
     }, concurrency: transferConcurrency);
 
-    return bytes;
+    return tally;
   }
+}
+
+/// Mutable accumulator of a transfer run's outcome, used to build the final
+/// [SyncMetrics] report. [rawBytes] is uncompressed content sent; [wireBytes] is
+/// the same content after any transport compression.
+class _TransferTally {
+  final List<String> transferred = [];
+  final List<String> copied = [];
+  final List<String> removed = [];
+  int rawBytes = 0;
+  int wireBytes = 0;
 }

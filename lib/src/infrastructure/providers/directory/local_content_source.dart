@@ -47,12 +47,40 @@ class LocalContentSource implements ContentSource {
     return file.readAsBytes();
   }
 
+  /// Bytes written per chunk when reporting progress for a local write.
+  static const _chunkSize = 64 * 1024;
+
   @override
-  Future<void> writeBytes(String relativePath, List<int> bytes) async {
+  Future<void> writeBytes(
+    String relativePath,
+    List<int> bytes, {
+    void Function(int sent, int total)? onProgress,
+  }) async {
     _ensureWritable();
     final file = File(_resolve(relativePath));
     await file.parent.create(recursive: true);
-    await file.writeAsBytes(bytes, flush: true);
+    if (onProgress == null) {
+      await file.writeAsBytes(bytes, flush: true);
+      return;
+    }
+    // Stream the buffer through an IOSink so progress can be reported as it
+    // settles. Local writes are fast, but mirroring the streaming contract keeps
+    // per-file bars consistent with the remote transport.
+    final total = bytes.length;
+    final sink = file.openWrite();
+    try {
+      var sent = 0;
+      onProgress(0, total);
+      while (sent < total) {
+        final end = (sent + _chunkSize).clamp(0, total);
+        sink.add(bytes.sublist(sent, end));
+        await sink.flush();
+        sent = end;
+        onProgress(sent, total);
+      }
+    } finally {
+      await sink.close();
+    }
   }
 
   @override

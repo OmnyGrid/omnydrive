@@ -73,8 +73,16 @@ class FakeContentSource implements ContentSource {
   });
 
   @override
-  Future<void> writeBytes(String relativePath, List<int> bytes) =>
-      _tracked(() => files[relativePath] = bytes);
+  Future<void> writeBytes(
+    String relativePath,
+    List<int> bytes, {
+    void Function(int sent, int total)? onProgress,
+  }) => _tracked(() {
+    // Emit a couple of progress ticks so tests can observe streaming.
+    onProgress?.call(0, bytes.length);
+    onProgress?.call(bytes.length, bytes.length);
+    files[relativePath] = bytes;
+  });
 
   @override
   Future<void> delete(String relativePath) =>
@@ -375,4 +383,112 @@ void main() {
     expect(local.reads, equals(2));
     expect(result.metrics.bytesTransferred, equals(dup.length * 2));
   });
+
+  test('streams per-file upload progress with size and kind', () async {
+    final body = utf8.encode('a sizeable payload for streaming');
+    final local = FakeContentSource(files: {'big.bin': body});
+    final origin = FakeContentSource();
+    final baseline = await origin.manifest().then((m) => m.hash());
+
+    final sync = DirectorySynchronizer(
+      drive: driveOf(),
+      resolveOrigin: ({required bool writable}) => origin,
+      resolveLocal: (_) => local,
+    );
+
+    final events = <ProgressEvent>[];
+    final plan = await sync.plan(
+      mount: mountOf(baseline),
+      baseline: baseline,
+      direction: SyncDirection.push,
+    );
+    await sync.apply(
+      mount: mountOf(baseline),
+      plan: plan,
+      baseline: baseline,
+      progress: ProgressReporter(events.add),
+    );
+
+    final forFile = events.where((e) => e.path == 'big.bin').toList();
+    // The file moves through started -> progress -> completed, all tagged as a
+    // transfer and carrying the original (uncompressed) size.
+    expect(
+      forFile.map((e) => e.itemState),
+      containsAllInOrder([
+        ProgressItemState.started,
+        ProgressItemState.progress,
+        ProgressItemState.completed,
+      ]),
+    );
+    expect(
+      forFile.every((e) => e.itemKind == ProgressItemKind.transferred),
+      isTrue,
+    );
+    expect(forFile.every((e) => e.itemSize == body.length), isTrue);
+
+    // Streaming progress advances the per-file byte count to the full size.
+    final streamed = forFile.where(
+      (e) => e.itemState == ProgressItemState.progress,
+    );
+    expect(streamed, isNotEmpty);
+    expect(streamed.last.itemBytes, equals(body.length));
+  });
+
+  test(
+    'final report lists transferred and copied paths with wire bytes',
+    () async {
+      final dup = utf8.encode('shared build artifact');
+      final local = FakeContentSource(
+        files: {
+          'src/lib.js': dup,
+          'build/lib.js': dup, // deduplicated copy of src/lib.js
+          'unique.txt': utf8.encode('one of a kind'),
+        },
+      );
+      final origin = FakeContentSource();
+      final baseline = await origin.manifest().then((m) => m.hash());
+
+      final sync = DirectorySynchronizer(
+        drive: driveOf(),
+        resolveOrigin: ({required bool writable}) => origin,
+        resolveLocal: (_) => local,
+      );
+
+      final events = <ProgressEvent>[];
+      final plan = await sync.plan(
+        mount: mountOf(baseline),
+        baseline: baseline,
+        direction: SyncDirection.push,
+      );
+      final result = await sync.apply(
+        mount: mountOf(baseline),
+        plan: plan,
+        baseline: baseline,
+        progress: ProgressReporter(events.add),
+      );
+
+      final metrics = result.metrics;
+      // Exactly one of the duplicate pair is deduplicated (which one is the
+      // representative depends on iteration order); the rest are transferred.
+      expect(metrics.filesCopied, equals(1));
+      expect(metrics.filesTransferred, equals(2));
+      expect(metrics.copiedPaths.single, anyOf('src/lib.js', 'build/lib.js'));
+      expect(metrics.transferredPaths, contains('unique.txt'));
+      // The pair's representative is whichever wasn't copied.
+      final copied = metrics.copiedPaths.single;
+      final representative = copied == 'src/lib.js'
+          ? 'build/lib.js'
+          : 'src/lib.js';
+      expect(metrics.transferredPaths, contains(representative));
+      // The fake doesn't compress, so wire bytes equal the raw transferred bytes.
+      expect(metrics.bytesOnWire, equals(metrics.bytesTransferred));
+      expect(metrics.bytesOnWire, greaterThan(0));
+
+      // The copied path's completion event is tagged accordingly.
+      final copyDone = events.firstWhere(
+        (e) => e.path == copied && e.itemState == ProgressItemState.completed,
+      );
+      expect(copyDone.itemKind, equals(ProgressItemKind.copied));
+    },
+  );
 }

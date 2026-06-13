@@ -343,6 +343,52 @@ void main() {
     );
   });
 
+  test('a push streams gzip upload progress over HTTP', () async {
+    final src = await TempDir.create();
+    addTearDown(src.cleanup);
+    await src.writeFile('readme.md', 'hello');
+    final drive = await publisher.publishDirectory(
+      path: src.path,
+      name: 'docs',
+    );
+
+    final dst = await TempDir.create();
+    addTearDown(dst.cleanup);
+    final dest = dst.resolve('mirror');
+    final mount = await cloner.cloneDrive(driveId: drive.id.value, dest: dest);
+
+    // A large, highly compressible file: comfortably over the 1 KiB threshold so
+    // the PUT is gzip-encoded, exercising the streamed (StreamedRequest) path.
+    final big = 'lorem ipsum ' * 5000;
+    await File('$dest/big.txt').writeAsString(big);
+
+    final events = <ProgressEvent>[];
+    final result = await cloner.syncMount(
+      mount.id.value,
+      progress: ProgressReporter(events.add),
+    );
+
+    // The content really arrived intact through the streamed, compressed PUT.
+    expect(result.status, SyncStatus.clean);
+    expect(File('${src.path}/big.txt').readAsStringSync(), big);
+
+    final forBig = events.where((e) => e.path == 'big.txt').toList();
+    final streamed = forBig
+        .where((e) => e.itemState == ProgressItemState.progress)
+        .toList();
+    expect(streamed, isNotEmpty);
+    // The wire (compressed) total is well below the original size, and progress
+    // climbs to that total — while the reported original size is the real one.
+    final wireTotal = streamed.last.itemTotalBytes!;
+    expect(wireTotal, lessThan(big.length));
+    expect(streamed.last.itemBytes, equals(wireTotal));
+    expect(forBig.last.itemSize, equals(big.length));
+    // The final report counts raw bytes and the smaller on-wire (gzip) bytes.
+    expect(result.metrics.bytesTransferred, equals(big.length));
+    expect(result.metrics.bytesOnWire, lessThan(big.length));
+    expect(result.metrics.transferredPaths, contains('big.txt'));
+  });
+
   group('transfer compression', () {
     // A raw client that does NOT auto-decompress, so we can inspect what the
     // content server actually puts on the wire.

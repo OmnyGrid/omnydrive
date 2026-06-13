@@ -3,6 +3,7 @@ import '../entities/endpoint_identity.dart';
 import '../entities/mount_info.dart';
 import '../entities/sync_result.dart';
 import '../value_objects/path_filter.dart';
+import '../../shared/observability/progress.dart';
 
 /// A device that participates in the network: it can publish, mount, clone and
 /// synchronize drives, coordinated through a hub.
@@ -36,5 +37,8 @@ abstract interface class DriveEndpoint {
   });
 
   /// Synchronizes a mount; may throw `ConflictDetectedException`.
-  Future<SyncResult> syncMount(String mountId);
+  ///
+  /// When [progress] is supplied, transfer progress is reported to it as the
+  /// sync runs (per-file upload progress plus a final summary in the result).
+  Future<SyncResult> syncMount(String mountId, {ProgressReporter? progress});
 }

@@ -26,6 +26,7 @@ import '../infrastructure/persistence/in_memory_mount_registry.dart';
 import '../infrastructure/persistence/in_memory_sync_state_store.dart';
 import '../shared/errors/domain_exception.dart';
 import '../shared/errors/error_codes.dart';
+import '../shared/observability/progress.dart';
 import '../shared/utils/clock.dart';
 import '../shared/utils/id_generator.dart';
 import '../domain/entities/sync_plan.dart';
@@ -208,7 +209,10 @@ class LocalDriveEndpoint implements DriveEndpoint {
   // --- Synchronizing --------------------------------------------------------
 
   @override
-  Future<SyncResult> syncMount(String mountId) async {
+  Future<SyncResult> syncMount(
+    String mountId, {
+    ProgressReporter? progress,
+  }) async {
     final mid = MountId(mountId);
     final info = await mounts.findById(mid);
     if (info == null) {
@@ -300,6 +304,7 @@ class LocalDriveEndpoint implements DriveEndpoint {
         mount: info,
         plan: plan,
         baseline: baseline,
+        progress: progress,
       );
     } on ConflictDetectedException {
       await syncStates.save(
