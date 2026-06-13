@@ -1,3 +1,21 @@
+## 1.6.0
+
+- Default ignore file: a directory can carry a gitignore-style `.omnyignore`
+  file at its root listing glob patterns to exclude from the published drive.
+  - `omnydrive publish <dir>` consults it **only when neither `--include` nor
+    `--exclude` is given**, turning its patterns into the drive's default
+    `exclude` set. Explicit filter flags override the file entirely.
+  - The patterns are baked into `Drive.filter` at publish time, so every cloner
+    and subsequent `sync` automatically skips the ignored sub-paths — no
+    client-side configuration.
+  - The file name is customizable with `--ignore-file <name>` (defaults to
+    `.omnyignore`).
+  - New `parseOmnyIgnore` / `loadOmnyIgnore` utilities and the
+    `omnyIgnoreFileName` constant are exported from `omnydrive.dart`.
+  - Lines are trimmed; blank lines and `#` comments are skipped. Negation
+    (`!pattern`) is not supported (PathFilter has no rule ordering to re-include
+    an excluded path) and such lines are ignored.
+
 ## 1.5.0
 
 - Live sync progress: directory-drive sync now reports per-file upload progress

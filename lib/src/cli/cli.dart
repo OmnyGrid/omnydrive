@@ -11,6 +11,7 @@ import '../domain/value_objects/auth_token.dart';
 import '../domain/value_objects/capability.dart';
 import '../domain/value_objects/endpoint_id.dart';
 import '../domain/value_objects/path_filter.dart';
+import '../shared/utils/omny_ignore.dart';
 import '../infrastructure/http/content_server.dart';
 import '../infrastructure/http/http_drive_hub.dart';
 import '../infrastructure/http/hub_server.dart';
@@ -276,6 +277,14 @@ class PublishCommand extends _BaseCommand {
         help:
             'Exclude sub-paths matching this glob (repeatable). '
             'Wins over --include; e.g. --exclude "**/*.tmp".',
+      )
+      ..addOption(
+        'ignore-file',
+        defaultsTo: omnyIgnoreFileName,
+        help:
+            'Name of the gitignore-style file (at the directory root) whose '
+            'patterns are excluded by default when neither --include nor '
+            '--exclude is given. Defaults to "$omnyIgnoreFileName".',
       );
   }
 
@@ -302,9 +311,26 @@ class PublishCommand extends _BaseCommand {
         '--include/--exclude only apply to directory drives, not --git.',
       );
     }
-    final filter = (include.isEmpty && exclude.isEmpty)
+
+    // When no explicit filter flags are given, fall back to the directory's
+    // ignore file (`.omnyignore` by default) as the default exclude set.
+    var effectiveExclude = exclude;
+    if (!isGit && include.isEmpty && exclude.isEmpty) {
+      final ignoreFile = argResults!['ignore-file'] as String;
+      effectiveExclude = await loadOmnyIgnore(
+        p.absolute(rest.first),
+        fileName: ignoreFile,
+      );
+      if (effectiveExclude.isNotEmpty) {
+        stdout.writeln(
+          'Applying ${effectiveExclude.length} default exclude '
+          'pattern(s) from $ignoreFile.',
+        );
+      }
+    }
+    final filter = (include.isEmpty && effectiveExclude.isEmpty)
         ? null
-        : PathFilter(include: include, exclude: exclude);
+        : PathFilter(include: include, exclude: effectiveExclude);
 
     final drive = isGit
         ? await endpoint.publishGit(

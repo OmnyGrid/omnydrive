@@ -244,6 +244,98 @@ void main() {
     );
   });
 
+  test(
+    '.omnyignore supplies default excludes when no flags are given',
+    () async {
+      await cli(stateA.path, [
+        'login',
+        '--hub',
+        hubUrl,
+        '--id',
+        'alpha',
+        '--serve-url',
+        contentUrl,
+      ]);
+
+      final src = await TempDir.create('omnydrive_cli_src_');
+      addTearDown(src.cleanup);
+      await src.writeFile('keep.txt', 'K');
+      await src.writeFile('secret/p.txt', 'P');
+      await src.writeFile('.omnyignore', '# defaults\nsecret/**\n');
+
+      // No --include/--exclude: the ignore file drives the filter.
+      expect(
+        await cli(stateA.path, ['publish', src.path, '--name', 'docs']),
+        0,
+      );
+
+      await cli(stateB.path, [
+        'login',
+        '--hub',
+        hubUrl,
+        '--id',
+        'beta',
+        '--serve-url',
+        'http://beta.invalid',
+      ]);
+      final dest = p.join(
+        (await TempDir.create('omnydrive_cli_dst_')).path,
+        'm',
+      );
+      addTearDown(() => Directory(dest).parent.delete(recursive: true));
+
+      expect(await cli(stateB.path, ['clone', 'alpha/docs', dest]), 0);
+      expect(File(p.join(dest, 'keep.txt')).readAsStringSync(), 'K');
+      expect(File(p.join(dest, 'secret/p.txt')).existsSync(), isFalse);
+    },
+  );
+
+  test('explicit --include overrides the .omnyignore file', () async {
+    await cli(stateA.path, [
+      'login',
+      '--hub',
+      hubUrl,
+      '--id',
+      'alpha',
+      '--serve-url',
+      contentUrl,
+    ]);
+
+    final src = await TempDir.create('omnydrive_cli_src_');
+    addTearDown(src.cleanup);
+    await src.writeFile('secret/p.txt', 'P');
+    // The ignore file would drop secret/**, but an explicit --include wins and
+    // skips the file entirely.
+    await src.writeFile('.omnyignore', 'secret/**\n');
+
+    expect(
+      await cli(stateA.path, [
+        'publish',
+        src.path,
+        '--name',
+        'docs',
+        '--include',
+        'secret/**',
+      ]),
+      0,
+    );
+
+    await cli(stateB.path, [
+      'login',
+      '--hub',
+      hubUrl,
+      '--id',
+      'beta',
+      '--serve-url',
+      'http://beta.invalid',
+    ]);
+    final dest = p.join((await TempDir.create('omnydrive_cli_dst_')).path, 'm');
+    addTearDown(() => Directory(dest).parent.delete(recursive: true));
+
+    expect(await cli(stateB.path, ['clone', 'alpha/docs', dest]), 0);
+    expect(File(p.join(dest, 'secret/p.txt')).readAsStringSync(), 'P');
+  });
+
   test('commands without a login fail with exit code 1', () async {
     final empty = await TempDir.create('omnydrive_cli_empty_');
     addTearDown(empty.cleanup);
