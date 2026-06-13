@@ -1,3 +1,15 @@
+## 1.7.0
+
+- `PathFilter` now matches slash-less patterns at **any depth**, matching
+  gitignore semantics. Previously `*.dill` (or any wildcard pattern without a
+  `/`) only matched files at the drive root, so nested files like
+  `bin/server.dill` slipped past `.omnyignore`/`--exclude`. Patterns with a
+  leading or internal `/` (e.g. `/build`, `a/b`) remain anchored to the root.
+- Added `PathFilter.scope(prefix, patterns)`, which rewrites raw patterns (e.g.
+  from a nested `.omnyignore`) so they apply within a subtree — anchored
+  patterns bind to `<prefix>/…`, slash-less patterns to `<prefix>/**/…`,
+  mirroring how git applies a nested `.gitignore`.
+
 ## 1.6.0
 
 - Default ignore file: a directory can carry a gitignore-style `.omnyignore`
