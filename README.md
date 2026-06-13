@@ -181,6 +181,25 @@ matches one character, and a trailing slash or bare directory name (`build/`,
 `--include` is given a path must match at least one include. Filtering applies
 to directory drives only (not `--git`).
 
+Instead of repeating the same `--exclude` flags, drop a gitignore-style
+**`.omnyignore`** file at the directory's root. When you run `publish` **without**
+any `--include`/`--exclude` flag, its patterns become the drive's default
+exclude set:
+
+```sh
+# .omnyignore
+build/
+**/*.tmp
+.env
+
+omnydrive publish ./project --name code   # build/, *.tmp and .env are skipped
+```
+
+Blank lines and `#` comments are ignored; negation (`!pattern`) is not supported.
+Explicit `--include`/`--exclude` flags override the file. Use a different file
+name with `--ignore-file <name>`. The resolved patterns are baked into the drive
+at publish time, so editing `.omnyignore` later requires re-publishing.
+
 ### Library
 
 Embed the engine directly — no servers required:
