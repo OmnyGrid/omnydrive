@@ -11,6 +11,9 @@ import '../../shared/errors/domain_exception.dart';
 /// - A trailing `/` (e.g. `build/`) — or a bare token with no `/` and no
 ///   wildcard (e.g. `build`) — matches the directory itself and everything
 ///   under it (expanded to `build/**`).
+/// - A pattern with a leading or internal `/` (e.g. `/build`, `a/b`) is
+///   **anchored** to the drive root; a slash-less pattern (e.g. `*.tmp`,
+///   `build`) matches at **any depth** below the root (gitignore semantics).
 /// - A leading `/` anchors to the root and is otherwise insignificant.
 ///
 /// Semantics, evaluated per path:
@@ -78,10 +81,38 @@ class PathFilter {
     exclude: (json['exclude'] as List?)?.cast<String>() ?? const [],
   );
 
+  /// Rewrites raw [patterns] (e.g. from a nested `.omnyignore`) so they apply
+  /// relative to the subtree [prefix] (forward-slash, relative to the drive
+  /// root). Anchored patterns bind to `<prefix>/…`; slash-less patterns keep
+  /// their match-at-any-depth meaning *within* the subtree (`<prefix>/**/…`),
+  /// mirroring how git applies a nested `.gitignore`.
+  static List<String> scope(String prefix, List<String> patterns) {
+    final base = prefix
+        .replaceAll('\\', '/')
+        .replaceAll(RegExp(r'^/+|/+$'), '');
+    return [
+      for (final pattern in patterns)
+        _isAnchored(pattern)
+            ? '$base/${pattern.replaceAll(RegExp(r'^/+'), '')}'
+            : '$base/**/$pattern',
+    ];
+  }
+
   /// Normalizes a path to the form patterns are matched against: forward slashes
   /// and no leading/trailing `/`.
   static String _normalizePath(String path) =>
       path.replaceAll('\\', '/').replaceAll(RegExp(r'^/+|/+$'), '');
+
+  /// Whether [pattern] is anchored to the drive root, i.e. it carries a leading
+  /// or internal `/` (a lone trailing `/` is a directory marker, not anchoring).
+  /// Slash-less patterns are unanchored and match at any depth.
+  static bool _isAnchored(String pattern) {
+    final trimmed = pattern.trim();
+    final core = trimmed.endsWith('/')
+        ? trimmed.substring(0, trimmed.length - 1)
+        : trimmed;
+    return core.contains('/');
+  }
 
   /// Translates a glob [pattern] into an anchored [RegExp].
   static RegExp _compile(String pattern) {
@@ -89,6 +120,9 @@ class PathFilter {
     if (trimmed.isEmpty) {
       throw const ValidationException('Filter pattern must not be empty');
     }
+
+    // A slash-less pattern is not bound to the root: it matches at any depth.
+    final anchored = _isAnchored(trimmed);
 
     // A directory pattern (`build/` or a bare `build`) matches the subtree.
     var glob = trimmed.replaceAll(RegExp(r'^/+|/+$'), '');
@@ -100,6 +134,8 @@ class PathFilter {
     if (isDirToken) glob = '$glob/**';
 
     final buffer = StringBuffer('^');
+    // Unanchored patterns may start at any directory level below the root.
+    if (!anchored) buffer.write('(?:.*/)?');
     for (var i = 0; i < glob.length; i++) {
       final char = glob[i];
       switch (char) {
