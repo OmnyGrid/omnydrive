@@ -29,13 +29,22 @@ class FakeContentSource implements ContentSource {
   int reads = 0;
   int copies = 0;
 
+  /// Paths whose manifest entry advertises the executable bit.
+  final Set<String> executable;
+
+  /// Executable flag received by [writeBytes]/[copy] per destination path, so
+  /// tests can assert the bit propagated across a transfer.
+  final Map<String, bool> writtenExecutable = {};
+
   FakeContentSource({
     Map<String, List<int>>? files,
+    Set<String>? executable,
     this.isWritable = true,
     this.canCopy = true,
     this.copyFails = false,
     this.delay = const Duration(milliseconds: 5),
-  }) : files = files ?? {};
+  }) : files = files ?? {},
+       executable = executable ?? {};
 
   ContentHash _hashOf(List<int> bytes) =>
       ContentHash(hex: sha256.convert(bytes).toString());
@@ -61,6 +70,7 @@ class FakeContentSource implements ContentSource {
         path: entry.key,
         size: bytes.length,
         hash: ContentHash(hex: digest.toString()),
+        executable: executable.contains(entry.key),
       );
     }
     return FileManifest(entries);
@@ -76,12 +86,14 @@ class FakeContentSource implements ContentSource {
   Future<void> writeBytes(
     String relativePath,
     List<int> bytes, {
+    bool executable = false,
     void Function(int sent, int total)? onProgress,
   }) => _tracked(() {
     // Emit a couple of progress ticks so tests can observe streaming.
     onProgress?.call(0, bytes.length);
     onProgress?.call(bytes.length, bytes.length);
     files[relativePath] = bytes;
+    writtenExecutable[relativePath] = executable;
   });
 
   @override
@@ -92,17 +104,22 @@ class FakeContentSource implements ContentSource {
   Future<bool> supportsCopy() async => canCopy && isWritable;
 
   @override
-  Future<bool> copy(String fromPath, String toPath, ContentHash expectedHash) =>
-      _tracked(() {
-        if (copyFails) return false;
-        final source = files[fromPath];
-        // Verify the source still holds the expected content, mirroring the
-        // real sources; a mismatch tells the caller to fall back to a transfer.
-        if (source == null || _hashOf(source) != expectedHash) return false;
-        copies++;
-        files[toPath] = source;
-        return true;
-      });
+  Future<bool> copy(
+    String fromPath,
+    String toPath,
+    ContentHash expectedHash, {
+    bool executable = false,
+  }) => _tracked(() {
+    if (copyFails) return false;
+    final source = files[fromPath];
+    // Verify the source still holds the expected content, mirroring the
+    // real sources; a mismatch tells the caller to fall back to a transfer.
+    if (source == null || _hashOf(source) != expectedHash) return false;
+    copies++;
+    files[toPath] = source;
+    writtenExecutable[toPath] = executable;
+    return true;
+  });
 }
 
 void main() {
@@ -491,4 +508,95 @@ void main() {
       expect(copyDone.itemKind, equals(ProgressItemKind.copied));
     },
   );
+
+  test('push carries the executable bit to the destination', () async {
+    final local = FakeContentSource(
+      files: {
+        'run.sh': utf8.encode('#!/bin/sh\necho hi\n'),
+        'readme.txt': utf8.encode('plain'),
+      },
+      executable: {'run.sh'},
+    );
+    final origin = FakeContentSource(canCopy: false);
+    final baseline = await origin.manifest().then((m) => m.hash());
+
+    final sync = DirectorySynchronizer(
+      drive: driveOf(),
+      resolveOrigin: ({required bool writable}) => origin,
+      resolveLocal: (_) => local,
+    );
+    final plan = await sync.plan(
+      mount: mountOf(baseline),
+      baseline: baseline,
+      direction: SyncDirection.push,
+    );
+    await sync.apply(mount: mountOf(baseline), plan: plan, baseline: baseline);
+
+    expect(origin.writtenExecutable['run.sh'], isTrue);
+    expect(origin.writtenExecutable['readme.txt'], isFalse);
+  });
+
+  test('an exec-bit-only change is detected and re-synced', () async {
+    final bytes = utf8.encode('#!/bin/sh\necho hi\n');
+    // Identical content on both sides; only the local exec bit differs.
+    final local = FakeContentSource(
+      files: {'run.sh': bytes},
+      executable: {'run.sh'},
+    );
+    final origin = FakeContentSource(files: {'run.sh': bytes});
+    final baseline = await origin.manifest().then((m) => m.hash());
+
+    final sync = DirectorySynchronizer(
+      drive: driveOf(),
+      resolveOrigin: ({required bool writable}) => origin,
+      resolveLocal: (_) => local,
+    );
+    final plan = await sync.plan(
+      mount: mountOf(baseline),
+      baseline: baseline,
+      direction: SyncDirection.push,
+    );
+
+    // Content hashes match, so the only reason to transfer is the exec bit.
+    expect(plan.changedPaths, equals(['run.sh']));
+    final result = await sync.apply(
+      mount: mountOf(baseline),
+      plan: plan,
+      baseline: baseline,
+    );
+    expect(result.appliedChanges, equals(1));
+    expect(origin.writtenExecutable['run.sh'], isTrue);
+  });
+
+  test('the executable bit reaches a copy destination too', () async {
+    final dup = utf8.encode('#!/bin/sh\nshared\n');
+    // Two identical executables; one is transferred, the other copied — both
+    // must land executable at the origin.
+    final local = FakeContentSource(
+      files: {'bin/a.sh': dup, 'bin/b.sh': dup},
+      executable: {'bin/a.sh', 'bin/b.sh'},
+    );
+    final origin = FakeContentSource();
+    final baseline = await origin.manifest().then((m) => m.hash());
+
+    final sync = DirectorySynchronizer(
+      drive: driveOf(),
+      resolveOrigin: ({required bool writable}) => origin,
+      resolveLocal: (_) => local,
+    );
+    final plan = await sync.plan(
+      mount: mountOf(baseline),
+      baseline: baseline,
+      direction: SyncDirection.push,
+    );
+    final result = await sync.apply(
+      mount: mountOf(baseline),
+      plan: plan,
+      baseline: baseline,
+    );
+
+    expect(result.metrics.filesCopied, equals(1));
+    expect(origin.writtenExecutable['bin/a.sh'], isTrue);
+    expect(origin.writtenExecutable['bin/b.sh'], isTrue);
+  });
 }

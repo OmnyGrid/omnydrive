@@ -147,6 +147,40 @@ void main() {
     expect(File('${src.path}/added.txt').readAsStringSync(), 'new');
   });
 
+  test(
+    'an executable mirror file pushes its +x bit back over HTTP',
+    () async {
+      final src = await TempDir.create();
+      addTearDown(src.cleanup);
+      await src.writeFile('readme.md', 'hello');
+      final drive = await publisher.publishDirectory(
+        path: src.path,
+        name: 'docs',
+      );
+
+      final dst = await TempDir.create();
+      addTearDown(dst.cleanup);
+      final dest = dst.resolve('mirror');
+      final mount = await cloner.cloneDrive(
+        driveId: drive.id.value,
+        dest: dest,
+      );
+
+      await File('$dest/run.sh').writeAsString('#!/bin/sh\necho hi\n');
+      await Process.run('chmod', ['+x', '$dest/run.sh']);
+
+      final result = await cloner.syncMount(mount.id.value);
+      expect(result.status, SyncStatus.clean);
+      final mode = File('${src.path}/run.sh').statSync().mode;
+      expect(
+        mode & 0x49,
+        isNonZero,
+        reason: 'origin file should be executable',
+      );
+    },
+    testOn: '!windows',
+  );
+
   test('a read-only clone pulls remote updates over HTTP', () async {
     final src = await TempDir.create();
     addTearDown(src.cleanup);

@@ -54,6 +54,7 @@ class LocalContentSource implements ContentSource {
   Future<void> writeBytes(
     String relativePath,
     List<int> bytes, {
+    bool executable = false,
     void Function(int sent, int total)? onProgress,
   }) async {
     _ensureWritable();
@@ -61,26 +62,27 @@ class LocalContentSource implements ContentSource {
     await file.parent.create(recursive: true);
     if (onProgress == null) {
       await file.writeAsBytes(bytes, flush: true);
-      return;
-    }
-    // Stream the buffer through an IOSink so progress can be reported as it
-    // settles. Local writes are fast, but mirroring the streaming contract keeps
-    // per-file bars consistent with the remote transport.
-    final total = bytes.length;
-    final sink = file.openWrite();
-    try {
-      var sent = 0;
-      onProgress(0, total);
-      while (sent < total) {
-        final end = (sent + _chunkSize).clamp(0, total);
-        sink.add(bytes.sublist(sent, end));
-        await sink.flush();
-        sent = end;
-        onProgress(sent, total);
+    } else {
+      // Stream the buffer through an IOSink so progress can be reported as it
+      // settles. Local writes are fast, but mirroring the streaming contract
+      // keeps per-file bars consistent with the remote transport.
+      final total = bytes.length;
+      final sink = file.openWrite();
+      try {
+        var sent = 0;
+        onProgress(0, total);
+        while (sent < total) {
+          final end = (sent + _chunkSize).clamp(0, total);
+          sink.add(bytes.sublist(sent, end));
+          await sink.flush();
+          sent = end;
+          onProgress(sent, total);
+        }
+      } finally {
+        await sink.close();
       }
-    } finally {
-      await sink.close();
     }
+    if (executable) await _applyExecutable(file.path);
   }
 
   @override
@@ -97,8 +99,9 @@ class LocalContentSource implements ContentSource {
   Future<bool> copy(
     String fromPath,
     String toPath,
-    ContentHash expectedHash,
-  ) async {
+    ContentHash expectedHash, {
+    bool executable = false,
+  }) async {
     _ensureWritable();
     final from = File(_resolve(fromPath));
     if (!await from.exists()) return false;
@@ -111,7 +114,15 @@ class LocalContentSource implements ContentSource {
     await to.parent.create(recursive: true);
     // Reuse the bytes already read for hashing rather than a second disk read.
     await to.writeAsBytes(bytes, flush: true);
+    if (executable) await _applyExecutable(to.path);
     return true;
+  }
+
+  /// Marks [path] executable via `chmod +x`. No-op on platforms without POSIX
+  /// execute bits. `dart:io` has no native chmod, so this shells out.
+  static Future<void> _applyExecutable(String path) async {
+    if (Platform.isWindows) return;
+    await Process.run('chmod', ['+x', path]);
   }
 
   void _ensureWritable() {

@@ -245,6 +245,9 @@ class DirectorySynchronizer implements Synchronizer {
 
     // Uploads [path]'s bytes to the destination, streaming per-file progress and
     // recording the raw and wire (post-compression) byte counts in the tally.
+    bool executableOf(String path) =>
+        sourceManifest.entries[path]?.executable ?? false;
+
     Future<void> transfer(String path) async {
       final data = await source.readBytes(path);
       reportStart(path, ProgressItemKind.transferred);
@@ -252,6 +255,7 @@ class DirectorySynchronizer implements Synchronizer {
       await dest.writeBytes(
         path,
         data,
+        executable: executableOf(path),
         onProgress: (sent, t) {
           wireTotal = t;
           reportItemProgress(path, sent, t);
@@ -306,7 +310,12 @@ class DirectorySynchronizer implements Synchronizer {
     // source drifted or vanished, so fall back to a full transfer for that path.
     await forEachConcurrent(copies, (op) async {
       reportStart(op.to, ProgressItemKind.copied);
-      final copied = await dest.copy(op.from, op.to, op.hash);
+      final copied = await dest.copy(
+        op.from,
+        op.to,
+        op.hash,
+        executable: executableOf(op.to),
+      );
       if (copied) {
         tally.copied.add(op.to);
         reportDone(op.to, ProgressItemKind.copied);

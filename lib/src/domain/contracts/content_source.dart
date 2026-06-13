@@ -14,6 +14,9 @@ abstract interface class ContentSource {
   /// Writes [bytes] to [relativePath], creating parents as needed.
   /// Throws if the source is read-only.
   ///
+  /// When [executable] is true the destination marks the file as executable
+  /// (POSIX execute bit); platforms without execute bits ignore it.
+  ///
   /// When [onProgress] is supplied it is invoked as the write streams, with the
   /// number of bytes flushed so far and the total to write. For transports that
   /// compress the payload, both figures are the compressed (wire) size, so a
@@ -21,6 +24,7 @@ abstract interface class ContentSource {
   Future<void> writeBytes(
     String relativePath,
     List<int> bytes, {
+    bool executable = false,
     void Function(int sent, int total)? onProgress,
   });
 
@@ -44,5 +48,13 @@ abstract interface class ContentSource {
   /// [expectedHash]; the caller must then fall back to a normal byte transfer.
   /// This guards the time-of-check/time-of-use gap between manifest build and
   /// copy execution. Only meaningful when [supportsCopy] resolves `true`.
-  Future<bool> copy(String fromPath, String toPath, ContentHash expectedHash);
+  ///
+  /// When [executable] is true the copied file is marked executable at the
+  /// destination, matching a normal [writeBytes].
+  Future<bool> copy(
+    String fromPath,
+    String toPath,
+    ContentHash expectedHash, {
+    bool executable = false,
+  });
 }
