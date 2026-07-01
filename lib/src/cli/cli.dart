@@ -10,6 +10,7 @@ import '../domain/entities/endpoint_identity.dart';
 import '../domain/value_objects/auth_token.dart';
 import '../domain/value_objects/capability.dart';
 import '../domain/value_objects/endpoint_id.dart';
+import '../domain/value_objects/git_credential.dart';
 import '../domain/value_objects/path_filter.dart';
 import '../shared/utils/omny_ignore.dart';
 import '../infrastructure/http/content_server.dart';
@@ -22,6 +23,7 @@ import '../infrastructure/persistence/file/file_sync_state_store.dart';
 import '../shared/errors/domain_exception.dart';
 import '../shared/version.dart';
 import 'endpoint_config.dart';
+import 'git_credential_store.dart';
 import 'sync_progress.dart';
 
 /// A user-facing CLI error that maps to a clean message and exit code 1,
@@ -52,7 +54,8 @@ Future<int> runOmnydrive(List<String> args) async {
         ..addCommand(CloneCommand())
         ..addCommand(SyncCommand())
         ..addCommand(MountsCommand())
-        ..addCommand(DrivesCommand());
+        ..addCommand(DrivesCommand())
+        ..addCommand(CredentialCommand());
 
   try {
     return await runner.run(args) ?? 0;
@@ -100,10 +103,14 @@ abstract class _BaseCommand extends Command<int> {
       config.hubUrl,
       token: config.token == null ? null : AuthToken(config.token!),
     );
+    final credentials = await GitCredentialStore.load(stateDir);
     return LocalDriveEndpoint(
       identity: config.identity,
       hub: hub,
-      providers: networkedProviderRegistry(endpoint: config.identity.id),
+      providers: networkedProviderRegistry(
+        endpoint: config.identity.id,
+        credentials: credentials,
+      ),
       published: FileDriveRegistry(EndpointConfig.drivesPath(stateDir)),
       mounts: FileMountRegistry(EndpointConfig.mountsPath(stateDir)),
       syncStates: FileSyncStateStore(EndpointConfig.syncPath(stateDir)),
@@ -439,6 +446,123 @@ class MountsCommand extends _BaseCommand {
         '${m.syncState.status.wireValue}  ${m.localPath}',
       );
     }
+    return 0;
+  }
+}
+
+/// Parent command grouping the git-credential subcommands.
+class CredentialCommand extends Command<int> {
+  CredentialCommand() {
+    addSubcommand(CredentialAddCommand());
+    addSubcommand(CredentialListCommand());
+    addSubcommand(CredentialRemoveCommand());
+  }
+
+  @override
+  String get name => 'credential';
+  @override
+  String get description =>
+      'Manage git credentials used to reach private remotes.';
+}
+
+class CredentialAddCommand extends _BaseCommand {
+  CredentialAddCommand() {
+    argParser
+      ..addOption('pat', help: 'HTTPS personal access token.')
+      ..addOption(
+        'username',
+        help: 'Username (for --password, or to override the PAT username).',
+      )
+      ..addOption('password', help: 'HTTPS password (with --username).')
+      ..addOption('ssh-key', help: 'Path to an SSH private key.')
+      ..addOption(
+        'passphrase',
+        help: 'SSH key passphrase (requires an ssh-agent to take effect).',
+      );
+  }
+
+  @override
+  String get name => 'add';
+  @override
+  String get description =>
+      'Store a credential for a git host (e.g. github.com).';
+
+  @override
+  Future<int> run() async {
+    final rest = argResults!.rest;
+    if (rest.isEmpty) {
+      throw const CliException(
+        'Usage: omnydrive credential add <host> '
+        '(--pat <t> | --username <u> --password <p> | --ssh-key <path>)',
+      );
+    }
+    final host = rest.first;
+    final pat = argResults!['pat'] as String?;
+    final username = argResults!['username'] as String?;
+    final password = argResults!['password'] as String?;
+    final sshKey = argResults!['ssh-key'] as String?;
+    final passphrase = argResults!['passphrase'] as String?;
+
+    final GitCredential credential;
+    if (pat != null) {
+      credential = GitPat(token: pat, username: username ?? 'x-access-token');
+    } else if (sshKey != null) {
+      credential = GitSshKey(keyPath: sshKey, passphrase: passphrase);
+    } else if (username != null && password != null) {
+      credential = GitUserPass(username: username, password: password);
+    } else {
+      throw const CliException(
+        'Provide one of: --pat, --ssh-key, or --username with --password.',
+      );
+    }
+
+    final store = await GitCredentialStore.load(stateDir);
+    store.put(host, credential);
+    await store.save(stateDir);
+    stdout.writeln('Stored $credential for $host.');
+    return 0;
+  }
+}
+
+class CredentialListCommand extends _BaseCommand {
+  @override
+  String get name => 'list';
+  @override
+  String get description => 'List stored git credentials (secrets masked).';
+
+  @override
+  Future<int> run() async {
+    final store = await GitCredentialStore.load(stateDir);
+    if (store.hosts.isEmpty) {
+      stdout.writeln('No git credentials.');
+      return 0;
+    }
+    for (final host in store.hosts) {
+      stdout.writeln('$host  ${store.get(host)}');
+    }
+    return 0;
+  }
+}
+
+class CredentialRemoveCommand extends _BaseCommand {
+  @override
+  String get name => 'remove';
+  @override
+  String get description => 'Remove the stored credential for a git host.';
+
+  @override
+  Future<int> run() async {
+    final rest = argResults!.rest;
+    if (rest.isEmpty) {
+      throw const CliException('Usage: omnydrive credential remove <host>');
+    }
+    final host = rest.first;
+    final store = await GitCredentialStore.load(stateDir);
+    if (!store.remove(host)) {
+      throw CliException('No credential stored for $host.');
+    }
+    await store.save(stateDir);
+    stdout.writeln('Removed credential for $host.');
     return 0;
   }
 }

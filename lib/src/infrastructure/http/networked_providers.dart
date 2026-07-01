@@ -2,6 +2,7 @@ import 'package:http/http.dart' as http;
 
 import '../../application/provider_registry.dart';
 import '../../domain/contracts/content_source.dart';
+import '../../domain/contracts/git_credential_resolver.dart';
 import '../../domain/value_objects/endpoint_id.dart';
 import '../../domain/value_objects/origin_uri.dart';
 import '../../domain/value_objects/path_filter.dart';
@@ -20,6 +21,7 @@ ProviderRegistry networkedProviderRegistry({
   required EndpointId endpoint,
   http.Client? client,
   GitCli git = const GitCli(),
+  GitCredentialResolver? credentials,
   Clock? clock,
   ContentCompression? compression,
 }) {
@@ -52,6 +54,11 @@ ProviderRegistry networkedProviderRegistry({
 
   return ProviderRegistry([
     DirectoryProvider(endpoint: endpoint, resolveSource: resolve),
-    GitProvider(endpoint: endpoint, git: git, clock: clock),
+    GitProvider(
+      endpoint: endpoint,
+      git: git,
+      credentials: credentials,
+      clock: clock,
+    ),
   ]);
 }

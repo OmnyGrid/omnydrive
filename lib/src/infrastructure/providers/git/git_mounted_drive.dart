@@ -2,6 +2,7 @@ import '../../../domain/contracts/mounted_drive.dart';
 import '../../../domain/entities/file_manifest.dart';
 import '../../../domain/entities/mount_info.dart';
 import '../../../domain/entities/sync_plan.dart';
+import '../../../domain/value_objects/git_credential.dart';
 import '../../../domain/value_objects/sync_ref.dart';
 import '../../../shared/observability/progress.dart';
 import '../directory/manifest_builder.dart';
@@ -13,11 +14,16 @@ class GitMountedDrive implements MountedDrive {
   final MountInfo info;
 
   final GitCli git;
+
+  /// Credential for the origin remote, or null to use the host's git config.
+  final GitCredential? credential;
+
   final ManifestBuilder _builder;
 
   GitMountedDrive({
     required this.info,
     required this.git,
+    this.credential,
     ManifestBuilder builder = const ManifestBuilder(),
   }) : _builder = builder;
 
@@ -32,7 +38,7 @@ class GitMountedDrive implements MountedDrive {
   @override
   Future<void> applyRemote(SyncPlan plan, {ProgressReporter? progress}) async {
     progress?.phase(ProgressPhase.transferring, 'Fetching');
-    await git.fetch(_path);
+    await git.fetch(_path, credential: credential);
     final branch = await git.currentBranch(_path);
     await git.mergeFastForward(_path, 'origin/$branch');
     progress?.phase(ProgressPhase.done, 'Pulled');

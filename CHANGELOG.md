@@ -1,3 +1,23 @@
+## 1.9.0
+
+- Git drives can now authenticate to private remotes with explicit credentials.
+  A new `GitCredential` value object models three variants — an HTTPS personal
+  access token (`GitPat`), an HTTPS username+password (`GitUserPass`), and an
+  SSH private key (`GitSshKey`) — each injecting itself at the single `GitCli`
+  process chokepoint (HTTPS via `-c http.extraHeader` basic auth, SSH via
+  `GIT_SSH_COMMAND`). `GIT_TERMINAL_PROMPT=0` is always set so a missing or
+  wrong credential fails fast instead of hanging.
+- Credentials are stored **host-scoped** in a local `credentials.json` (keyed by
+  git host, tightened to `0600`) and resolved by the origin's host at
+  invocation time via `GitCredentialResolver`. They are never placed on the
+  `Drive` entity, so they are never serialized to `drives.json`, registered with
+  the hub, or transmitted to peers. Manage them with a new CLI command:
+  `omnydrive credential add <host> (--pat | --username/--password | --ssh-key)`,
+  `omnydrive credential list`, and `omnydrive credential remove <host>`.
+  `publish`/`clone`/`sync` pick up the matching credential automatically by
+  host, so no per-command flags are needed. Passphrase-protected SSH keys still
+  require an ssh-agent.
+
 ## 1.8.0
 
 - Directory sync now preserves the executable (`+x`) bit. `FileManifestEntry`
