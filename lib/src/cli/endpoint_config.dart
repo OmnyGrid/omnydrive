@@ -51,6 +51,8 @@ class EndpointConfig {
   static String drivesPath(String stateDir) => p.join(stateDir, 'drives.json');
   static String mountsPath(String stateDir) => p.join(stateDir, 'mounts.json');
   static String syncPath(String stateDir) => p.join(stateDir, 'sync.json');
+  static String credentialsPath(String stateDir) =>
+      p.join(stateDir, 'credentials.json');
 
   /// Loads the config from [stateDir], or null if the endpoint is not set up.
   static Future<EndpointConfig?> load(String stateDir) async {

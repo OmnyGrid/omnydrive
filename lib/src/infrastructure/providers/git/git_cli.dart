@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import '../../../domain/entities/git_divergence.dart';
+import '../../../domain/value_objects/git_credential.dart';
 import '../../../shared/errors/domain_exception.dart';
 
 /// Result of a single `git` invocation.
@@ -47,15 +48,23 @@ class GitCli {
 
   /// Runs git with [args]. Throws [ProviderException] on a non-zero exit unless
   /// [allowFailure] is set, in which case the [GitResult] is returned as-is.
+  ///
+  /// When [credential] is supplied, its `-c` config args are prepended and its
+  /// environment overrides applied, so authentication is injected in this one
+  /// chokepoint. `GIT_TERMINAL_PROMPT=0` is always set so a missing or wrong
+  /// credential fails fast instead of hanging on an interactive prompt.
   Future<GitResult> run(
     List<String> args, {
     String? workingDirectory,
     bool allowFailure = false,
+    GitCredential? credential,
   }) async {
     final result = await Process.run(
       executable,
-      args,
+      [...?credential?.configArgs(), ...args],
       workingDirectory: workingDirectory,
+      environment: {'GIT_TERMINAL_PROMPT': '0', ...?credential?.envVars()},
+      includeParentEnvironment: true,
     );
     final out = (result.stdout as String).trimRight();
     final err = (result.stderr as String).trimRight();
@@ -82,6 +91,7 @@ class GitCli {
     String? branch,
     int? depth,
     bool bare = false,
+    GitCredential? credential,
   }) => run([
     'clone',
     if (bare) '--bare',
@@ -89,7 +99,7 @@ class GitCli {
     if (branch != null) ...['--branch', branch],
     url,
     dest,
-  ]);
+  ], credential: credential);
 
   // ---- References ----------------------------------------------------------
 
@@ -106,8 +116,12 @@ class GitCli {
 
   /// Looks up the SHA a [ref] points to on the remote [url]. Returns null when
   /// the ref does not exist.
-  Future<String?> lsRemote(String url, String ref) async {
-    final res = await run(['ls-remote', url, ref]);
+  Future<String?> lsRemote(
+    String url,
+    String ref, {
+    GitCredential? credential,
+  }) async {
+    final res = await run(['ls-remote', url, ref], credential: credential);
     if (res.stdout.isEmpty) return null;
     return res.stdout.split(RegExp(r'\s+')).first.trim();
   }
@@ -125,8 +139,11 @@ class GitCli {
 
   // ---- Mutations -----------------------------------------------------------
 
-  Future<void> fetch(String path, {String remote = 'origin'}) =>
-      run(['fetch', remote], workingDirectory: path);
+  Future<void> fetch(
+    String path, {
+    String remote = 'origin',
+    GitCredential? credential,
+  }) => run(['fetch', remote], workingDirectory: path, credential: credential);
 
   Future<void> checkoutNewBranch(String path, String branch) =>
       run(['checkout', '-b', branch], workingDirectory: path);
@@ -182,12 +199,12 @@ class GitCli {
     String branch, {
     String remote = 'origin',
     bool setUpstream = true,
-  }) => run([
-    'push',
-    if (setUpstream) '-u',
-    remote,
-    branch,
-  ], workingDirectory: path);
+    GitCredential? credential,
+  }) => run(
+    ['push', if (setUpstream) '-u', remote, branch],
+    workingDirectory: path,
+    credential: credential,
+  );
 
   /// Computes ahead/behind divergence between [base] and [head] in [path].
   Future<GitDivergence> divergence(

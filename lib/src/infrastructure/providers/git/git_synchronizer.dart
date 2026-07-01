@@ -6,6 +6,7 @@ import '../../../domain/entities/sync_result.dart';
 import '../../../domain/enums/sync_status.dart';
 import '../../../domain/services/branch_naming_strategy.dart';
 import '../../../domain/services/conflict_detector.dart';
+import '../../../domain/value_objects/git_credential.dart';
 import '../../../domain/value_objects/origin_uri.dart';
 import '../../../domain/value_objects/sync_ref.dart';
 import '../../../shared/errors/domain_exception.dart';
@@ -23,12 +24,17 @@ class GitSynchronizer implements Synchronizer {
   final Drive drive;
   final GitCli git;
   final BranchNamingStrategy branchNaming;
+
+  /// Credential for the origin remote, or null to use the host's git config.
+  final GitCredential? credential;
+
   final ConflictDetector _detector;
 
   GitSynchronizer({
     required this.drive,
     required this.git,
     required this.branchNaming,
+    this.credential,
     ConflictDetector detector = const ConflictDetector(),
   }) : _detector = detector;
 
@@ -80,7 +86,7 @@ class GitSynchronizer implements Synchronizer {
 
     if (plan.direction == SyncDirection.pull) {
       progress?.phase(ProgressPhase.transferring, 'Fetching');
-      await git.fetch(path);
+      await git.fetch(path, credential: credential);
       final branch = await git.currentBranch(path);
       await git.mergeFastForward(path, 'origin/$branch');
       final newSha = await git.revParse(path);
@@ -113,7 +119,7 @@ class GitSynchronizer implements Synchronizer {
       await git.addAll(path);
       await git.commit(path, 'OmnyDrive sync');
     }
-    await git.push(path, feature.value);
+    await git.push(path, feature.value, credential: credential);
     final newSha = await git.revParse(path);
 
     stopwatch.stop();
@@ -129,7 +135,11 @@ class GitSynchronizer implements Synchronizer {
 
   Future<String?> _originBranchSha(String branch) async {
     if (drive.originUri.isRemote) {
-      return git.lsRemote(drive.originUri.value, 'refs/heads/$branch');
+      return git.lsRemote(
+        drive.originUri.value,
+        'refs/heads/$branch',
+        credential: credential,
+      );
     }
     final path = _localOriginPath(drive.originUri);
     return git.branchSha(path, branch);

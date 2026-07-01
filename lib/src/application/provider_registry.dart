@@ -1,4 +1,5 @@
 import '../domain/contracts/drive_provider.dart';
+import '../domain/contracts/git_credential_resolver.dart';
 import '../domain/entities/drive.dart';
 import '../domain/enums/provider_type.dart';
 import '../domain/value_objects/endpoint_id.dart';
@@ -29,10 +30,16 @@ class ProviderRegistry {
   factory ProviderRegistry.local({
     required EndpointId endpoint,
     GitCli git = const GitCli(),
+    GitCredentialResolver? credentials,
     Clock? clock,
   }) => ProviderRegistry([
     DirectoryProvider(endpoint: endpoint),
-    GitProvider(endpoint: endpoint, git: git, clock: clock),
+    GitProvider(
+      endpoint: endpoint,
+      git: git,
+      credentials: credentials,
+      clock: clock,
+    ),
   ]);
 
   /// Whether a provider is registered for [type].

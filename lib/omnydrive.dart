@@ -44,6 +44,7 @@ export 'src/domain/value_objects/sync_ref.dart';
 export 'src/domain/value_objects/content_hash.dart';
 export 'src/domain/value_objects/branch_name.dart';
 export 'src/domain/value_objects/auth_token.dart';
+export 'src/domain/value_objects/git_credential.dart';
 export 'src/domain/value_objects/capability.dart';
 
 // Domain — entities.
@@ -64,6 +65,7 @@ export 'src/domain/entities/git_divergence.dart';
 // Domain — contracts.
 export 'src/domain/contracts/content_source.dart';
 export 'src/domain/contracts/drive_provider.dart';
+export 'src/domain/contracts/git_credential_resolver.dart';
 export 'src/domain/contracts/mounted_drive.dart';
 export 'src/domain/contracts/synchronizer.dart';
 export 'src/domain/contracts/drive_hub.dart';

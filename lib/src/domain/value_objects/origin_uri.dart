@@ -53,6 +53,28 @@ class OriginUri {
       scheme == OriginUriScheme.git ||
       scheme == OriginUriScheme.ssh;
 
+  /// The remote host this origin addresses, or null for local `dir`/`file`
+  /// origins. Used to look up a host-scoped git credential.
+  String? get host {
+    if (_looksLikeScpSyntax(value)) {
+      // git@github.com:org/repo.git -> github.com
+      final at = value.indexOf('@');
+      final colon = value.indexOf(':');
+      return value.substring(at + 1, colon);
+    }
+    switch (scheme) {
+      case OriginUriScheme.http:
+      case OriginUriScheme.https:
+      case OriginUriScheme.git:
+      case OriginUriScheme.ssh:
+        final parsed = Uri.parse(value);
+        return parsed.host.isEmpty ? null : parsed.host;
+      case OriginUriScheme.dir:
+      case OriginUriScheme.file:
+        return null;
+    }
+  }
+
   /// Whether this looks like a git endpoint (URL or scp syntax).
   bool get isGitUrl =>
       scheme == OriginUriScheme.git ||

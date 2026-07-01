@@ -1,4 +1,5 @@
 import '../../../domain/contracts/drive_provider.dart';
+import '../../../domain/contracts/git_credential_resolver.dart';
 import '../../../domain/contracts/mounted_drive.dart';
 import '../../../domain/contracts/synchronizer.dart';
 import '../../../domain/entities/drive.dart';
@@ -30,11 +31,17 @@ class GitProvider implements DriveProvider {
   final EndpointId endpoint;
   final GitCli git;
   final BranchNamingStrategy branchNaming;
+
+  /// Resolves the credential (if any) for a remote origin. Null means git falls
+  /// back to the host's own configuration.
+  final GitCredentialResolver? credentials;
+
   final Clock _clock;
 
   GitProvider({
     required this.endpoint,
     this.git = const GitCli(),
+    this.credentials,
     BranchNamingStrategy? branchNaming,
     Clock? clock,
   }) : branchNaming = branchNaming ?? DefaultBranchNamingStrategy(),
@@ -64,7 +71,11 @@ class GitProvider implements DriveProvider {
 
   @override
   Future<SyncRef> currentRef(OriginUri origin, {PathFilter? filter}) async {
-    final sha = await git.lsRemote(_url(origin), 'HEAD');
+    final sha = await git.lsRemote(
+      _url(origin),
+      'HEAD',
+      credential: credentials?.resolve(origin),
+    );
     if (sha == null) {
       throw ProviderException('Could not resolve HEAD of ${origin.value}');
     }
@@ -78,18 +89,21 @@ class GitProvider implements DriveProvider {
     required MountType mountType,
     ProgressReporter? progress,
   }) async {
+    final credential = credentials?.resolve(drive.originUri);
     progress?.phase(ProgressPhase.transferring, 'Cloning ${drive.name}');
     await git.clone(
       _url(drive.originUri),
       dest.value,
       // Read-only mounts only need a shallow snapshot (CI workflow).
       depth: drive.accessMode.isReadOnly ? 1 : null,
+      credential: credential,
     );
     final headSha = await git.revParse(dest.value);
     progress?.phase(ProgressPhase.done, 'Cloned');
 
     return GitMountedDrive(
       git: git,
+      credential: credential,
       info: MountInfo(
         id: MountId('pending'),
         driveId: drive.id,
@@ -106,8 +120,12 @@ class GitProvider implements DriveProvider {
   }
 
   @override
-  Synchronizer synchronizer(Drive drive) =>
-      GitSynchronizer(drive: drive, git: git, branchNaming: branchNaming);
+  Synchronizer synchronizer(Drive drive) => GitSynchronizer(
+    drive: drive,
+    git: git,
+    branchNaming: branchNaming,
+    credential: credentials?.resolve(drive.originUri),
+  );
 
   String _url(OriginUri origin) => origin.scheme == OriginUriScheme.file
       ? Uri.parse(origin.value).toFilePath()
