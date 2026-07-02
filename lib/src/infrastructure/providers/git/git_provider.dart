@@ -11,6 +11,7 @@ import '../../../domain/enums/mount_type.dart';
 import '../../../domain/enums/provider_type.dart';
 import '../../../domain/enums/sync_status.dart';
 import '../../../domain/services/branch_naming_strategy.dart';
+import '../../../domain/services/git_push_policy.dart';
 import '../../../domain/value_objects/drive_id.dart';
 import '../../../domain/value_objects/endpoint_id.dart';
 import '../../../domain/value_objects/local_path.dart';
@@ -32,6 +33,10 @@ class GitProvider implements DriveProvider {
   final GitCli git;
   final BranchNamingStrategy branchNaming;
 
+  /// Decides whether a push targets the checked-out branch or a fresh feature
+  /// branch. Defaults to protecting `main`/`master`.
+  final GitPushPolicy pushPolicy;
+
   /// Resolves the credential (if any) for a remote origin. Null means git falls
   /// back to the host's own configuration.
   final GitCredentialResolver? credentials;
@@ -43,8 +48,10 @@ class GitProvider implements DriveProvider {
     this.git = const GitCli(),
     this.credentials,
     BranchNamingStrategy? branchNaming,
+    GitPushPolicy? pushPolicy,
     Clock? clock,
   }) : branchNaming = branchNaming ?? DefaultBranchNamingStrategy(),
+       pushPolicy = pushPolicy ?? const DefaultGitPushPolicy(),
        _clock = clock ?? SystemClock();
 
   @override
@@ -124,6 +131,7 @@ class GitProvider implements DriveProvider {
     drive: drive,
     git: git,
     branchNaming: branchNaming,
+    pushPolicy: pushPolicy,
     credential: credentials?.resolve(drive.originUri),
   );
 

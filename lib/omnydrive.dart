@@ -82,6 +82,7 @@ export 'src/domain/services/conflict_detector.dart';
 export 'src/domain/services/manifest_differ.dart';
 export 'src/domain/services/capability_negotiator.dart';
 export 'src/domain/services/branch_naming_strategy.dart';
+export 'src/domain/services/git_push_policy.dart';
 
 // Infrastructure — in-memory persistence.
 export 'src/infrastructure/persistence/in_memory_drive_registry.dart';
