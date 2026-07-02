@@ -154,6 +154,21 @@ class GitCli {
     credential: credential,
   );
 
+  /// Whether [branch] exists on [remote] as seen from the repo at [path].
+  Future<bool> remoteHasBranch(
+    String path,
+    String branch, {
+    String remote = 'origin',
+    GitCredential? credential,
+  }) async {
+    final res = await run(
+      ['ls-remote', '--heads', remote, branch],
+      workingDirectory: path,
+      credential: credential,
+    );
+    return res.stdout.trim().isNotEmpty;
+  }
+
   Future<void> checkoutNewBranch(String path, String branch) =>
       run(['checkout', '-b', branch], workingDirectory: path);
 

@@ -280,6 +280,37 @@ void main() {
     expect(File(p.join(m.dest.value, 'added.dart')).existsSync(), isTrue);
   });
 
+  gitTest('pull is a clean no-op when the branch is not on the origin', () async {
+    // Regression for the reported crash: the node was on a branch it had never
+    // pushed to the origin, so the branch doesn't exist there — a pull must be a
+    // no-op, not `git ... origin/<branch> - not something we can merge`.
+    await initOrigin();
+    final provider = newProvider();
+    final m = await mount(provider);
+
+    // Check out a local-only branch with a commit; never push it to the origin.
+    await git.checkoutNewBranch(m.dest.value, 'local-only');
+    await commitLocal(m.dest.value, 'local.dart', '// local only\n');
+    final localSha = await git.revParse(m.dest.value);
+
+    final sync = provider.synchronizer(m.drive);
+    final info = mountInfo(m.drive, m.dest, m.baseline);
+    final plan = await sync.plan(
+      mount: info,
+      baseline: m.baseline,
+      direction: SyncDirection.pull,
+    );
+    final result = await sync.apply(
+      mount: info,
+      plan: plan,
+      baseline: m.baseline,
+    );
+
+    expect(result.appliedChanges, 0);
+    expect(result.newRef, SyncRef.git(localSha)); // unchanged
+    expect(await git.revParse(m.dest.value), localSha);
+  });
+
   gitTest(
     'pull fetches by branch name so it works when origin/<branch> is absent',
     () async {
