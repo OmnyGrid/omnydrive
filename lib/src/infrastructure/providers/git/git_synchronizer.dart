@@ -6,6 +6,7 @@ import '../../../domain/entities/sync_result.dart';
 import '../../../domain/enums/sync_status.dart';
 import '../../../domain/services/branch_naming_strategy.dart';
 import '../../../domain/services/conflict_detector.dart';
+import '../../../domain/services/git_push_policy.dart';
 import '../../../domain/value_objects/git_credential.dart';
 import '../../../domain/value_objects/origin_uri.dart';
 import '../../../domain/value_objects/sync_ref.dart';
@@ -16,14 +17,19 @@ import 'git_cli.dart';
 
 /// Synchronizes a git drive using commit-SHA references.
 ///
-/// Read-write pushes never target a protected branch: a feature branch is
-/// created automatically via the [BranchNamingStrategy]. Before publishing, the
-/// origin's tracked branch must still point at the baseline SHA, otherwise a
-/// [ConflictDetectedException] is raised.
+/// A push publishes the checked-out branch. Whether it goes to that branch
+/// directly or to a fresh feature branch (via [BranchNamingStrategy]) is decided
+/// by the [GitPushPolicy] — protected branches (e.g. `main`/`master` or a
+/// mounted branch) get a feature branch so they are never moved by a push.
+/// Before publishing, the origin's branch must still point at the baseline SHA,
+/// otherwise a [ConflictDetectedException] is raised (a push never force-writes).
 class GitSynchronizer implements Synchronizer {
   final Drive drive;
   final GitCli git;
   final BranchNamingStrategy branchNaming;
+
+  /// Decides whether a push targets the checked-out branch or a feature branch.
+  final GitPushPolicy pushPolicy;
 
   /// Credential for the origin remote, or null to use the host's git config.
   final GitCredential? credential;
@@ -34,6 +40,7 @@ class GitSynchronizer implements Synchronizer {
     required this.drive,
     required this.git,
     required this.branchNaming,
+    this.pushPolicy = const DefaultGitPushPolicy(),
     this.credential,
     ConflictDetector detector = const ConflictDetector(),
   }) : _detector = detector;
@@ -115,9 +122,11 @@ class GitSynchronizer implements Synchronizer {
       );
     }
 
-    // Push: verify the origin still points at the baseline.
-    final baseBranch = await git.currentBranch(path);
-    final originSha = await _originBranchSha(baseBranch);
+    // Push. The origin's copy of the checked-out branch (if any) must still be
+    // at the baseline, else the push wouldn't fast-forward — surface a conflict
+    // rather than force-writing.
+    final branch = await git.currentBranch(path);
+    final originSha = await _originBranchSha(branch);
     if (originSha != null) {
       final conflict = _detector.detectForPush(
         driveId: drive.id,
@@ -127,25 +136,38 @@ class GitSynchronizer implements Synchronizer {
       if (conflict != null) throw ConflictDetectedException(conflict);
     }
 
-    // Always publish to a fresh feature branch, never a protected one.
-    final feature = branchNaming.nextBranch();
-    progress?.phase(ProgressPhase.transferring, 'Creating ${feature.value}');
-    await git.checkoutNewBranch(path, feature.value);
+    // Include any uncommitted working-tree changes in the push.
     if (await git.hasChanges(path)) {
       await git.addAll(path);
       await git.commit(path, 'OmnyDrive sync');
     }
-    await git.push(path, feature.value, credential: credential);
+
+    // A protected branch is published to a fresh feature branch (so it is never
+    // moved by a drive push); any other branch is pushed to directly, creating
+    // it on the origin when absent.
+    final protected = pushPolicy.isProtected(
+      branch: branch,
+      onOrigin: originSha != null,
+    );
+    final String target;
+    if (protected) {
+      target = branchNaming.nextBranch().value;
+      await git.checkoutNewBranch(path, target);
+    } else {
+      target = branch;
+    }
+    progress?.phase(ProgressPhase.transferring, 'Pushing $target');
+    await git.push(path, target, credential: credential);
     final newSha = await git.revParse(path);
 
     stopwatch.stop();
-    progress?.phase(ProgressPhase.done, 'Pushed ${feature.value}');
+    progress?.phase(ProgressPhase.done, 'Pushed $target');
     return SyncResult(
       newRef: SyncRef.git(newSha),
       appliedChanges: plan.changedPaths.isEmpty ? 1 : plan.changedPaths.length,
       status: SyncStatus.clean,
       metrics: SyncMetrics(duration: stopwatch.elapsed),
-      publishedBranch: feature.value,
+      publishedBranch: target,
     );
   }
 

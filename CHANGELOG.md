@@ -1,3 +1,15 @@
+## 1.11.0
+
+- **Pluggable git push target via `GitPushPolicy`.** A push now consults an
+  injectable policy to decide whether the checked-out branch is published to
+  **itself** or to a **fresh feature branch** (`BranchNamingStrategy`). The
+  default `DefaultGitPushPolicy` protects `main`/`master` (feature branch) and
+  pushes every other branch directly; embedders pass extra `protectedBranches`
+  (e.g. a mounted branch) or their own `GitPushPolicy` via
+  `GitProvider(pushPolicy: …)`. A protected branch is never moved by a push; a
+  branch absent from the origin is created by the direct push. Diverged origins
+  still surface a `ConflictDetectedException` (a push never force-writes).
+
 ## 1.10.1
 
 - **Fix git-drive pull failing with `git merge --ff-only origin/<branch> …

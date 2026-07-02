@@ -172,6 +172,70 @@ void main() {
     );
   });
 
+  gitTest('push updates a non-protected branch directly on the origin', () async {
+    final mainB = await initOrigin(); // protected default branch
+    final mainShaBefore = await git.branchSha(origin.path, mainB);
+
+    final provider =
+        newProvider(); // DefaultGitPushPolicy: protects main/master
+    final m = await mount(provider);
+    // A working branch the node created — not protected.
+    await git.checkoutNewBranch(m.dest.value, 'work');
+    await commitLocal(m.dest.value, 'w.dart', '// w\n');
+    final localSha = await git.revParse(m.dest.value);
+
+    final sync = provider.synchronizer(m.drive);
+    final info = mountInfo(m.drive, m.dest, m.baseline);
+    final plan = await sync.plan(
+      mount: info,
+      baseline: m.baseline,
+      direction: SyncDirection.push,
+    );
+    final result = await sync.apply(
+      mount: info,
+      plan: plan,
+      baseline: m.baseline,
+    );
+
+    // Pushed to the branch itself (created on the origin), not a feature branch.
+    expect(result.publishedBranch, 'work');
+    expect(await git.branchSha(origin.path, 'work'), localSha);
+    // The protected default branch is untouched.
+    expect(await git.branchSha(origin.path, mainB), mainShaBefore);
+  });
+
+  gitTest(
+    'a branch protected by the push policy goes to a feature branch',
+    () async {
+      final mainB = await initOrigin();
+      final provider = GitProvider(
+        endpoint: EndpointId('nas'),
+        branchNaming: DefaultBranchNamingStrategy(),
+        pushPolicy: DefaultGitPushPolicy(protectedBranches: {mainB, 'work'}),
+      );
+      final m = await mount(provider);
+      await git.checkoutNewBranch(m.dest.value, 'work'); // protected by policy
+      await commitLocal(m.dest.value, 'w.dart', '// w\n');
+
+      final sync = provider.synchronizer(m.drive);
+      final info = mountInfo(m.drive, m.dest, m.baseline);
+      final plan = await sync.plan(
+        mount: info,
+        baseline: m.baseline,
+        direction: SyncDirection.push,
+      );
+      final result = await sync.apply(
+        mount: info,
+        plan: plan,
+        baseline: m.baseline,
+      );
+
+      // Published to a fresh feature branch; 'work' is never pushed directly.
+      expect(result.publishedBranch, startsWith('omnydrive/'));
+      expect(await git.branchSha(origin.path, 'work'), isNull);
+    },
+  );
+
   gitTest('a push reports the files changed since the baseline', () async {
     await initOrigin();
     final provider = newProvider();
@@ -213,44 +277,52 @@ void main() {
     );
   });
 
-  gitTest('consecutive pushes publish incrementing feature branches', () async {
-    await initOrigin();
-    final provider = newProvider();
-    final m = await mount(provider);
-    final sync = provider.synchronizer(m.drive);
+  gitTest(
+    'first push off a protected branch creates a feature branch; later pushes '
+    'fast-forward it',
+    () async {
+      await initOrigin();
+      final provider = newProvider();
+      final m = await mount(provider); // on the protected default branch
+      final sync = provider.synchronizer(m.drive);
 
-    await commitLocal(m.dest.value, 'one.dart', '// 1\n');
-    var info = mountInfo(m.drive, m.dest, m.baseline);
-    var plan = await sync.plan(
-      mount: info,
-      baseline: m.baseline,
-      direction: SyncDirection.push,
-    );
-    final first = await sync.apply(
-      mount: info,
-      plan: plan,
-      baseline: m.baseline,
-    );
-    expect(first.publishedBranch, 'omnydrive/update-1');
+      await commitLocal(m.dest.value, 'one.dart', '// 1\n');
+      var info = mountInfo(m.drive, m.dest, m.baseline);
+      var plan = await sync.plan(
+        mount: info,
+        baseline: m.baseline,
+        direction: SyncDirection.push,
+      );
+      final first = await sync.apply(
+        mount: info,
+        plan: plan,
+        baseline: m.baseline,
+      );
+      // Protected default → published to a fresh feature branch (now checked out).
+      expect(first.publishedBranch, 'omnydrive/update-1');
 
-    // The next push builds on the previous result's ref.
-    await commitLocal(m.dest.value, 'two.dart', '// 2\n');
-    info = mountInfo(m.drive, m.dest, first.newRef);
-    plan = await sync.plan(
-      mount: info,
-      baseline: first.newRef,
-      direction: SyncDirection.push,
-    );
-    final second = await sync.apply(
-      mount: info,
-      plan: plan,
-      baseline: first.newRef,
-    );
-    expect(second.publishedBranch, 'omnydrive/update-2');
-
-    expect(await git.branchSha(origin.path, 'omnydrive/update-1'), isNotNull);
-    expect(await git.branchSha(origin.path, 'omnydrive/update-2'), isNotNull);
-  });
+      // The next push is on that (non-protected) feature branch, so it updates
+      // the same branch directly rather than creating a new one.
+      await commitLocal(m.dest.value, 'two.dart', '// 2\n');
+      info = mountInfo(m.drive, m.dest, first.newRef);
+      plan = await sync.plan(
+        mount: info,
+        baseline: first.newRef,
+        direction: SyncDirection.push,
+      );
+      final second = await sync.apply(
+        mount: info,
+        plan: plan,
+        baseline: first.newRef,
+      );
+      expect(second.publishedBranch, 'omnydrive/update-1');
+      expect(
+        await git.branchSha(origin.path, 'omnydrive/update-1'),
+        second.newRef.value,
+      );
+      expect(await git.branchSha(origin.path, 'omnydrive/update-2'), isNull);
+    },
+  );
 
   // --- Pull (origin → mount) ------------------------------------------------
 
