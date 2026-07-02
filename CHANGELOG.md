@@ -1,3 +1,18 @@
+## 1.10.0
+
+- `GitCredentialStore` is now a **public, exported** class (moved out of the
+  private `src/cli` tree into `src/infrastructure/persistence`), so embedding apps
+  can reuse the same host-scoped git-credential store — either via `load`/`save`,
+  or by composing its in-memory API (`fromJson`/`toJson`/`resolve`/`get`/`put`/
+  `remove`/`hosts`) into their own persistence. `load`/`save` take an optional
+  `fileName` (defaulting to `defaultFileName`) to host the store elsewhere.
+- **The credential file is now `git-credentials.json`** (was `credentials.json`),
+  a `git-` prefix that keeps git credentials distinct from any other
+  `credentials.json` in the state directory. The name is exposed as
+  `GitCredentialStore.defaultFileName`. The `omnydrive credential` CLI reads/writes the
+  new file; an existing `credentials.json` is not migrated automatically —
+  re-add credentials or rename the file.
+
 ## 1.9.0
 
 - Git drives can now authenticate to private remotes with explicit credentials.

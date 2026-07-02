@@ -1,5 +1,4 @@
 import 'package:omnydrive/omnydrive.dart';
-import 'package:omnydrive/src/cli/git_credential_store.dart';
 import 'package:test/test.dart';
 
 import '../../support/temp_dir.dart';

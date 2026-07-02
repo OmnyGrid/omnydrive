@@ -93,6 +93,7 @@ export 'src/infrastructure/persistence/in_memory_sync_state_store.dart';
 export 'src/infrastructure/persistence/file/file_drive_registry.dart';
 export 'src/infrastructure/persistence/file/file_mount_registry.dart';
 export 'src/infrastructure/persistence/file/file_sync_state_store.dart';
+export 'src/infrastructure/persistence/git_credential_store.dart';
 
 // Infrastructure — directory provider.
 export 'src/infrastructure/providers/directory/manifest_builder.dart';
