@@ -38,9 +38,12 @@ class GitMountedDrive implements MountedDrive {
   @override
   Future<void> applyRemote(SyncPlan plan, {ProgressReporter? progress}) async {
     progress?.phase(ProgressPhase.transferring, 'Fetching');
-    await git.fetch(_path, credential: credential);
     final branch = await git.currentBranch(_path);
-    await git.mergeFastForward(_path, 'origin/$branch');
+    // Fetch the checked-out branch by name and fast-forward to FETCH_HEAD, so a
+    // pull works even when `origin/<branch>` is not a local remote-tracking ref
+    // (e.g. a shallow/single-branch clone, or a branch fetched by name).
+    await git.fetch(_path, branch: branch, credential: credential);
+    await git.mergeFastForward(_path, 'FETCH_HEAD');
     progress?.phase(ProgressPhase.done, 'Pulled');
   }
 }
