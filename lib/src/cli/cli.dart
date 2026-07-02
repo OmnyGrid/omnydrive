@@ -23,7 +23,7 @@ import '../infrastructure/persistence/file/file_sync_state_store.dart';
 import '../shared/errors/domain_exception.dart';
 import '../shared/version.dart';
 import 'endpoint_config.dart';
-import 'git_credential_store.dart';
+import '../infrastructure/persistence/git_credential_store.dart';
 import 'sync_progress.dart';
 
 /// A user-facing CLI error that maps to a clean message and exit code 1,
