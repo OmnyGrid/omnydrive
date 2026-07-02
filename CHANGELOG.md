@@ -1,3 +1,15 @@
+## 1.10.1
+
+- **Fix git-drive pull failing with `git merge --ff-only origin/<branch> …
+  not something we can merge`.** This happened when the checked-out branch does
+  not exist on the origin — e.g. the endpoint is on a branch it never pushed.
+  Pull now **no-ops** when the branch is absent from the origin (nothing to
+  pull), and otherwise fetches the branch by name (`git fetch origin <branch>`)
+  and fast-forwards to `FETCH_HEAD` — which also fixes pulls on
+  shallow/single-branch clones whose `origin/<branch>` tracking ref is absent.
+  `GitCli.fetch` gains an optional `branch` argument and there's a new
+  `GitCli.remoteHasBranch`.
+
 ## 1.10.0
 
 - `GitCredentialStore` is now a **public, exported** class (moved out of the

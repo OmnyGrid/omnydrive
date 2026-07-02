@@ -279,4 +279,77 @@ void main() {
     expect(await git.revParse(m.dest.value), originSha);
     expect(File(p.join(m.dest.value, 'added.dart')).existsSync(), isTrue);
   });
+
+  gitTest('pull is a clean no-op when the branch is not on the origin', () async {
+    // Regression for the reported crash: the node was on a branch it had never
+    // pushed to the origin, so the branch doesn't exist there — a pull must be a
+    // no-op, not `git ... origin/<branch> - not something we can merge`.
+    await initOrigin();
+    final provider = newProvider();
+    final m = await mount(provider);
+
+    // Check out a local-only branch with a commit; never push it to the origin.
+    await git.checkoutNewBranch(m.dest.value, 'local-only');
+    await commitLocal(m.dest.value, 'local.dart', '// local only\n');
+    final localSha = await git.revParse(m.dest.value);
+
+    final sync = provider.synchronizer(m.drive);
+    final info = mountInfo(m.drive, m.dest, m.baseline);
+    final plan = await sync.plan(
+      mount: info,
+      baseline: m.baseline,
+      direction: SyncDirection.pull,
+    );
+    final result = await sync.apply(
+      mount: info,
+      plan: plan,
+      baseline: m.baseline,
+    );
+
+    expect(result.appliedChanges, 0);
+    expect(result.newRef, SyncRef.git(localSha)); // unchanged
+    expect(await git.revParse(m.dest.value), localSha);
+  });
+
+  gitTest(
+    'pull fetches by branch name so it works when origin/<branch> is absent',
+    () async {
+      // Regression: a pull used to run `git merge --ff-only origin/<branch>`,
+      // which fails ("not something we can merge") when the remote-tracking ref
+      // does not exist — e.g. a single-branch/shallow clone checked out on a
+      // branch other than the one it tracks. The fix fetches the branch by name
+      // and fast-forwards to FETCH_HEAD.
+      final mainB = await initOrigin(); // origin: main @ C0
+
+      // origin: a `feature` branch one commit ahead of main.
+      await git.checkoutNewBranch(origin.path, 'feature');
+      await origin.writeFile('feature.dart', '// feature\n');
+      await git.addAll(origin.path);
+      await git.commit(origin.path, 'feature commit');
+      final featSha = await git.revParse(origin.path);
+      await git.checkout(origin.path, mainB); // leave origin on main
+
+      // Shallow single-branch clone of main → narrowed fetch refspec, so
+      // `origin/feature` is never created; then check out a local `feature`.
+      final dest = p.join(work.path, 'clone');
+      await git.clone(origin.path, dest, branch: mainB, depth: 1);
+      await git.checkoutNewBranch(dest, 'feature');
+
+      // Precondition: the remote-tracking ref for the current branch is absent,
+      // so the old `merge origin/feature` would fail.
+      final tracking = await git.run(
+        ['rev-parse', '--verify', '--quiet', 'refs/remotes/origin/feature'],
+        workingDirectory: dest,
+        allowFailure: true,
+      );
+      expect(tracking.ok, isFalse);
+
+      // The fixed pull primitive: fetch by name, fast-forward to FETCH_HEAD.
+      await git.fetch(dest, branch: 'feature');
+      await git.mergeFastForward(dest, 'FETCH_HEAD');
+
+      expect(await git.revParse(dest), featSha);
+      expect(File(p.join(dest, 'feature.dart')).existsSync(), isTrue);
+    },
+  );
 }

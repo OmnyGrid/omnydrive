@@ -139,11 +139,35 @@ class GitCli {
 
   // ---- Mutations -----------------------------------------------------------
 
+  /// Fetches from [remote]. When [branch] is given, fetches that branch by name
+  /// (`git fetch origin <branch>`, which also sets `FETCH_HEAD`), so a pull works
+  /// even for a shallow/single-branch clone whose `origin/<branch>`
+  /// remote-tracking ref would otherwise be absent.
   Future<void> fetch(
     String path, {
     String remote = 'origin',
+    String? branch,
     GitCredential? credential,
-  }) => run(['fetch', remote], workingDirectory: path, credential: credential);
+  }) => run(
+    ['fetch', remote, ?branch],
+    workingDirectory: path,
+    credential: credential,
+  );
+
+  /// Whether [branch] exists on [remote] as seen from the repo at [path].
+  Future<bool> remoteHasBranch(
+    String path,
+    String branch, {
+    String remote = 'origin',
+    GitCredential? credential,
+  }) async {
+    final res = await run(
+      ['ls-remote', '--heads', remote, branch],
+      workingDirectory: path,
+      credential: credential,
+    );
+    return res.stdout.trim().isNotEmpty;
+  }
 
   Future<void> checkoutNewBranch(String path, String branch) =>
       run(['checkout', '-b', branch], workingDirectory: path);

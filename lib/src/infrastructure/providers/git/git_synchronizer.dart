@@ -85,10 +85,26 @@ class GitSynchronizer implements Synchronizer {
     final path = mount.localPath.value;
 
     if (plan.direction == SyncDirection.pull) {
-      progress?.phase(ProgressPhase.transferring, 'Fetching');
-      await git.fetch(path, credential: credential);
       final branch = await git.currentBranch(path);
-      await git.mergeFastForward(path, 'origin/$branch');
+      // A branch that exists only locally (never pushed to the origin) has
+      // nothing to pull — treat it as a clean no-op instead of failing on a
+      // fetch/merge of a ref the origin doesn't have.
+      final originSha = await _originBranchSha(branch);
+      if (originSha == null) {
+        stopwatch.stop();
+        return SyncResult(
+          newRef: SyncRef.git(await git.revParse(path)),
+          appliedChanges: 0,
+          status: SyncStatus.clean,
+          metrics: SyncMetrics(duration: stopwatch.elapsed),
+        );
+      }
+      progress?.phase(ProgressPhase.transferring, 'Fetching');
+      // Fetch the checked-out branch by name and fast-forward to FETCH_HEAD, so
+      // a pull works even when `origin/<branch>` is not a local remote-tracking
+      // ref (e.g. a shallow/single-branch clone, or a branch fetched by name).
+      await git.fetch(path, branch: branch, credential: credential);
+      await git.mergeFastForward(path, 'FETCH_HEAD');
       final newSha = await git.revParse(path);
       stopwatch.stop();
       return SyncResult(
