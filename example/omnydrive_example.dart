@@ -108,8 +108,8 @@ Future<void> main() async {
   );
 
   // --- Tear down ------------------------------------------------------------
-  await hubHttp.close(force: true);
-  await contentHttp.close(force: true);
+  await hubHttp.stop();
+  await contentHttp.stop();
   await root.delete(recursive: true);
   print('\ndone.');
 }

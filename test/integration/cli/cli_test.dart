@@ -8,14 +8,15 @@ import 'package:omnydrive/omnydrive.dart'
         HubServer,
         LocalDriveHub;
 import 'package:omnydrive/omnydrive_cli.dart';
+import 'package:omnyhub/omnyhub.dart' show OmnyHub;
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
 import '../../support/temp_dir.dart';
 
 void main() {
-  late HttpServer hubHttp;
-  late HttpServer contentHttp;
+  late OmnyHub hubHttp;
+  late OmnyHub contentHttp;
   late String hubUrl;
   late String contentUrl;
   late TempDir stateA; // publisher
@@ -39,8 +40,8 @@ void main() {
   });
 
   tearDown(() async {
-    await hubHttp.close(force: true);
-    await contentHttp.close(force: true);
+    await hubHttp.stop();
+    await contentHttp.stop();
     await stateA.cleanup();
     await stateB.cleanup();
   });

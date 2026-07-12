@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:http/http.dart' as http;
 import 'package:omnydrive/omnydrive.dart';
+import 'package:omnyhub/omnyhub.dart' show OmnyHub;
 import 'package:test/test.dart';
 
 import '../../support/fixed_clock.dart';
@@ -24,8 +25,8 @@ void main() {
     registeredAt: t0,
   );
 
-  late HttpServer hubHttp;
-  late HttpServer contentHttp;
+  late OmnyHub hubHttp;
+  late OmnyHub contentHttp;
   late String hubUrl;
   late String contentUrl;
   late InMemoryDriveRegistry
@@ -84,8 +85,8 @@ void main() {
   });
 
   tearDown(() async {
-    await hubHttp.close(force: true);
-    await contentHttp.close(force: true);
+    await hubHttp.stop();
+    await contentHttp.stop();
   });
 
   test('publish is discoverable through the HTTP hub client', () async {
@@ -563,7 +564,7 @@ void main() {
           published,
           compression: ContentCompression.disabled,
         ).serve(address: '127.0.0.1', port: 0);
-        addTearDown(() => off.close(force: true));
+        addTearDown(off.stop);
         final offUrl = 'http://127.0.0.1:${off.port}';
 
         final src = await TempDir.create();
@@ -582,7 +583,7 @@ void main() {
         published,
         compression: ContentCompression(minBytes: 16),
       ).serve(address: '127.0.0.1', port: 0);
-      addTearDown(() => custom.close(force: true));
+      addTearDown(custom.stop);
       final customUrl = 'http://127.0.0.1:${custom.port}';
 
       final src = await TempDir.create();

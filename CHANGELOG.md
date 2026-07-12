@@ -1,3 +1,19 @@
+## 1.12.0
+
+- **HTTP servers now run on the [omnyhub](https://pub.dev/packages/omnyhub)
+  framework.** `HubServer` and `ContentServer` are hosted on an `OmnyHub`
+  (native path-parameter routing via `RouterService`) instead of a hand-wired
+  `shelf`/`shelf_router` pipeline. Removes the duplicated transport boilerplate:
+  the `serve`/`HttpServer` lifecycle, the per-server `_guard` error handler (now
+  a single shared `driveErrorMapper` middleware), and the `JsonResponse`
+  envelope factory (replaced by omnyhub's `successEnvelope`/`errorEnvelope`).
+  Dropped the direct `shelf`/`shelf_router` dependencies in favour of `omnyhub`.
+  - **Breaking (infrastructure):** `HubServer.serve()` / `ContentServer.serve()`
+    now return the running `OmnyHub` (stop it with `hub.stop()`) rather than a
+    `dart:io HttpServer`. The wire protocol (routes, status codes, JSON
+    envelopes, gzip negotiation, bearer auth) is unchanged, so the client SDK
+    and any HTTP consumer are unaffected.
+
 ## 1.11.0
 
 - **Pluggable git push target via `GitPushPolicy`.** A push now consults an

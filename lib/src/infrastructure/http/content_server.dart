@@ -1,10 +1,13 @@
-import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
-import 'package:shelf/shelf.dart';
-import 'package:shelf/shelf_io.dart' as shelf_io;
-import 'package:shelf_router/shelf_router.dart';
+import 'package:omnyhub/omnyhub.dart'
+    show
+        HttpTransport,
+        HubRequest,
+        HubResponse,
+        OmnyHub,
+        RouterService,
+        successEnvelope;
 
 import '../../domain/contracts/content_source.dart';
 import '../../domain/entities/drive_registration.dart';
@@ -15,15 +18,16 @@ import '../../domain/value_objects/drive_id.dart';
 import '../../domain/value_objects/origin_uri.dart';
 import '../../shared/errors/domain_exception.dart';
 import '../../shared/errors/error_codes.dart';
-import '../../shared/json/json_response.dart';
 import '../../shared/utils/content_compression.dart';
 import '../../shared/version.dart';
 import '../providers/directory/local_content_source.dart';
+import 'drive_http.dart';
 
 /// Resolves a published directory drive to the [ContentSource] that backs it.
 typedef DriveContentResolver = ContentSource Function(DriveRegistration drive);
 
-/// HTTP server that streams a publishing endpoint's directory drives to peers.
+/// HTTP server that streams a publishing endpoint's directory drives to peers,
+/// hosted on an [OmnyHub].
 ///
 /// It reads from the same `published` [DriveRegistry] the endpoint writes to
 /// when [DriveEndpoint.publishDirectory] runs, and exposes the routes
@@ -41,79 +45,108 @@ class ContentServer {
   }) : _resolve = resolveContent ?? _localResolver,
        _compression = compression ?? ContentCompression.standard;
 
-  Handler get handler {
-    final router = Router()
-      ..get('/version', _version)
-      ..get('/drives/<endpoint>/<name>/manifest', _manifest)
-      ..get('/drives/<endpoint>/<name>/files/<path|.*>', _readFile)
-      ..put('/drives/<endpoint>/<name>/files/<path|.*>', _writeFile)
-      ..post('/drives/<endpoint>/<name>/copy', _copyFile)
-      ..delete('/drives/<endpoint>/<name>/files/<path|.*>', _deleteFile);
-    return const Pipeline().addHandler(router.call);
-  }
+  /// The omnyhub service exposing the content routes.
+  RouterService buildService() => RouterService(name: 'content')
+    ..get('/version', (r, p) async => _version())
+    ..get('/drives/<endpoint>/<name>/manifest', (r, p) => _manifest(r, p))
+    ..get(
+      '/drives/<endpoint>/<name>/files/<path|.*>',
+      (r, p) => _readFile(r, p),
+    )
+    ..put(
+      '/drives/<endpoint>/<name>/files/<path|.*>',
+      (r, p) => _writeFile(r, p),
+    )
+    ..post('/drives/<endpoint>/<name>/copy', (r, p) => _copyFile(r, p))
+    ..delete(
+      '/drives/<endpoint>/<name>/files/<path|.*>',
+      (r, p) => _deleteFile(r, p),
+    );
 
-  /// Binds the server. Pass port 0 for an ephemeral port.
-  Future<HttpServer> serve({Object address = 'localhost', int port = 0}) =>
-      shelf_io.serve(handler, address, port);
+  /// Builds and starts an [OmnyHub] hosting the content routes on
+  /// [address]:[port] (port 0 = ephemeral). Stop it with `hub.stop()`.
+  Future<OmnyHub> serve({Object address = 'localhost', int port = 0}) async {
+    final server = OmnyHub(
+      transports: [HttpTransport.http(address: address, port: port)],
+      middleware: [driveErrorMapper()],
+    );
+    await server.registerService(buildService());
+    await server.start();
+    return server;
+  }
 
   // --- Handlers -------------------------------------------------------------
 
-  Response _version(Request request) => JsonResponse.ok({
+  HubResponse _version() => successEnvelope({
     'name': 'omnydrive-content',
     'version': omnyDriveVersion,
     'capabilities': [serverSideCopyCapability],
   });
 
-  Future<Response> _manifest(Request request) => _guard(() async {
-    final source = await _sourceFor(request, writable: false);
+  Future<HubResponse> _manifest(
+    HubRequest request,
+    Map<String, String> params,
+  ) async {
+    final source = await _sourceFor(params, writable: false);
     final manifest = await source.manifest();
     final bytes = utf8.encode(jsonEncode(manifest.toJson()));
-    final headers = {'content-type': 'application/json; charset=utf-8'};
-    if (ContentCompression.acceptsGzip(request.headers['accept-encoding']) &&
+    const contentType = 'application/json; charset=utf-8';
+    if (ContentCompression.acceptsGzip(request.header('accept-encoding')) &&
         _compression.shouldCompressBytes(bytes.length)) {
-      return Response.ok(
+      return HubResponse.bytes(
         _compression.encode(bytes),
-        headers: {...headers, 'content-encoding': 'gzip'},
+        contentType: contentType,
+        headers: {'content-encoding': 'gzip'},
       );
     }
-    return Response.ok(bytes, headers: headers);
-  });
+    return HubResponse.bytes(bytes, contentType: contentType);
+  }
 
-  Future<Response> _readFile(Request request) => _guard(() async {
-    final source = await _sourceFor(request, writable: false);
-    final path = request.params['path']!;
+  Future<HubResponse> _readFile(
+    HubRequest request,
+    Map<String, String> params,
+  ) async {
+    final source = await _sourceFor(params, writable: false);
+    final path = params['path']!;
     final bytes = await source.readBytes(path);
-    final headers = {'content-type': 'application/octet-stream'};
-    if (ContentCompression.acceptsGzip(request.headers['accept-encoding']) &&
+    const contentType = 'application/octet-stream';
+    if (ContentCompression.acceptsGzip(request.header('accept-encoding')) &&
         _compression.shouldCompress(path, bytes.length)) {
-      return Response.ok(
+      return HubResponse.bytes(
         _compression.encode(bytes),
-        headers: {...headers, 'content-encoding': 'gzip'},
+        contentType: contentType,
+        headers: {'content-encoding': 'gzip'},
       );
     }
-    return Response.ok(bytes, headers: headers);
-  });
+    return HubResponse.bytes(bytes, contentType: contentType);
+  }
 
-  Future<Response> _writeFile(Request request) => _guard(() async {
-    final source = await _sourceFor(request, writable: true);
-    var bytes = await request.read().expand((c) => c).toList();
-    if (ContentCompression.isGzip(request.headers['content-encoding'])) {
+  Future<HubResponse> _writeFile(
+    HubRequest request,
+    Map<String, String> params,
+  ) async {
+    final source = await _sourceFor(params, writable: true);
+    var bytes = await request.readBytes();
+    if (ContentCompression.isGzip(request.header('content-encoding'))) {
       bytes = ContentCompression.decode(bytes);
     }
     await source.writeBytes(
-      request.params['path']!,
+      params['path']!,
       bytes,
-      executable: request.headers[executableHeader] == '1',
+      executable: request.header(executableHeader) == '1',
     );
-    return JsonResponse.noContent();
-  });
+    return HubResponse(statusCode: 204);
+  }
 
-  /// Reuses content already present on this drive: copies [from] to [to] in
-  /// place — but only if [from] still hashes to the supplied value — so peers
+  /// Reuses content already present on this drive: copies `from` to `to` in
+  /// place — but only if `from` still hashes to the supplied value — so peers
   /// can avoid re-uploading bytes the origin already holds. A `409` signals the
   /// source drifted or vanished, telling the client to fall back to a transfer.
-  Future<Response> _copyFile(Request request) => _guard(() async {
-    final source = await _sourceFor(request, writable: true);
+  Future<HubResponse> _copyFile(
+    HubRequest request,
+    Map<String, String> params,
+  ) async {
+    final source = await _sourceFor(params, writable: true);
     final body =
         jsonDecode(await request.readAsString()) as Map<String, dynamic>;
     final copied = await source.copy(
@@ -123,26 +156,30 @@ class ContentServer {
       executable: body['executable'] == true,
     );
     if (!copied) {
-      return Response(409, body: 'copy source no longer matches expected hash');
+      return HubResponse.text(
+        'copy source no longer matches expected hash',
+        statusCode: 409,
+      );
     }
-    return JsonResponse.noContent();
-  });
+    return HubResponse(statusCode: 204);
+  }
 
-  Future<Response> _deleteFile(Request request) => _guard(() async {
-    final source = await _sourceFor(request, writable: true);
-    await source.delete(request.params['path']!);
-    return JsonResponse.noContent();
-  });
+  Future<HubResponse> _deleteFile(
+    HubRequest request,
+    Map<String, String> params,
+  ) async {
+    final source = await _sourceFor(params, writable: true);
+    await source.delete(params['path']!);
+    return HubResponse(statusCode: 204);
+  }
 
   // --- Helpers --------------------------------------------------------------
 
   Future<ContentSource> _sourceFor(
-    Request request, {
+    Map<String, String> params, {
     required bool writable,
   }) async {
-    final id = DriveId(
-      '${request.params['endpoint']}/${request.params['name']}',
-    );
+    final id = DriveId('${params['endpoint']}/${params['name']}');
     final registration = await published.findById(id);
     if (registration == null) {
       throw NotFoundException(
@@ -175,15 +212,5 @@ class ContentServer {
       isWritable: drive.accessMode.isReadWrite,
       filter: drive.filter,
     );
-  }
-
-  Future<Response> _guard(FutureOr<Response> Function() body) async {
-    try {
-      return await body();
-    } on DomainException catch (e) {
-      return JsonResponse.fromException(e);
-    } catch (_) {
-      return JsonResponse.internalError();
-    }
   }
 }

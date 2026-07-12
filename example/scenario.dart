@@ -8,10 +8,11 @@
 import 'dart:io';
 
 import 'package:omnydrive/omnydrive.dart';
+import 'package:omnyhub/omnyhub.dart' show OmnyHub;
 
 class Scenario {
-  final HttpServer _hubHttp;
-  final HttpServer _contentHttp;
+  final OmnyHub _hubHttp;
+  final OmnyHub _contentHttp;
   final InMemoryDriveRegistry _published;
 
   /// Base URL of the running hub.
@@ -94,8 +95,8 @@ class Scenario {
   );
 
   Future<void> stop() async {
-    await _hubHttp.close(force: true);
-    await _contentHttp.close(force: true);
+    await _hubHttp.stop();
+    await _contentHttp.stop();
     await root.delete(recursive: true);
   }
 }

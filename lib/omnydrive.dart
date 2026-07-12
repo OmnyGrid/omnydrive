@@ -12,7 +12,6 @@ library;
 export 'src/shared/version.dart';
 export 'src/shared/errors/error_codes.dart';
 export 'src/shared/errors/domain_exception.dart';
-export 'src/shared/json/json_response.dart';
 export 'src/shared/utils/clock.dart';
 export 'src/shared/utils/id_generator.dart';
 export 'src/shared/utils/retry_policy.dart';
