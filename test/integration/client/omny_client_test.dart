@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:omnydrive/omnydrive.dart'
     show
         ContentServer,
@@ -10,6 +8,7 @@ import 'package:omnydrive/omnydrive.dart'
         ProviderRegistry,
         SequentialIdGenerator;
 import 'package:omnydrive/omnydrive_client.dart';
+import 'package:omnyhub/omnyhub.dart' show OmnyHub;
 import 'package:test/test.dart';
 
 import '../../support/fixed_clock.dart';
@@ -18,8 +17,8 @@ import '../../support/temp_dir.dart';
 void main() {
   final t0 = DateTime.utc(2026, 1, 1);
 
-  late HttpServer hubHttp;
-  late HttpServer contentHttp;
+  late OmnyHub hubHttp;
+  late OmnyHub contentHttp;
   late String hubUrl;
   late String contentUrl;
   late InMemoryDriveRegistry published;
@@ -65,8 +64,8 @@ void main() {
   });
 
   tearDown(() async {
-    await hubHttp.close(force: true);
-    await contentHttp.close(force: true);
+    await hubHttp.stop();
+    await contentHttp.stop();
   });
 
   test('lists drives and reads content through OmnyClient', () async {

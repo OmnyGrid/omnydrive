@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:args/command_runner.dart';
+import 'package:omnyhub/omnyhub.dart' show OmnyHub;
 import 'package:path/path.dart' as p;
 
 import '../application/local_drive_endpoint.dart';
@@ -118,22 +119,26 @@ abstract class _BaseCommand extends Command<int> {
   }
 }
 
-/// Blocks until the process receives SIGINT, then closes [server].
-Future<int> _serveUntilInterrupted(HttpServer server, String label) async {
+/// Blocks until the process receives SIGINT, then stops [server].
+Future<int> _serveUntilInterrupted(OmnyHub server, String label) async {
   stdout.writeln(
-    '$label listening on http://${server.address.host}:'
+    '$label listening on http://${argHost(server)}:'
     '${server.port}  (Ctrl-C to stop)',
   );
   final done = Completer<void>();
   late final StreamSubscription sub;
   sub = ProcessSignal.sigint.watch().listen((_) async {
-    await server.close(force: true);
+    await server.stop();
     await sub.cancel();
     if (!done.isCompleted) done.complete();
   });
   await done.future;
   return 0;
 }
+
+/// The bound host of the hub's first transport (best-effort, for logging).
+Object argHost(OmnyHub server) =>
+    server.transports.isEmpty ? 'localhost' : server.transports.first.address;
 
 class ServeHubCommand extends _BaseCommand {
   ServeHubCommand() {
