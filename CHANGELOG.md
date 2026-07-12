@@ -1,3 +1,14 @@
+## 1.12.2
+
+- Raise the [omnyhub](https://pub.dev/packages/omnyhub) constraint to `^1.3.0`.
+  A maintenance bump only: 1.3.0 is an additive control-plane release (heartbeat
+  telemetry, one-way `NodeNotify`, connection lifecycle hooks, node retention,
+  injectable node transport) whose changes are confined to the node protocol,
+  which omnydrive does not use. The HTTP surface omnydrive is built on — `OmnyHub`,
+  `HttpTransport`, `HubRequest`/`HubResponse`, `RouterService`,
+  `successEnvelope`/`errorEnvelope`, `mapErrors` — is unchanged, so there is no
+  behaviour change and no API change here.
+
 ## 1.12.1
 
 - Raise the [omnyhub](https://pub.dev/packages/omnyhub) constraint to `^1.2.0`.
