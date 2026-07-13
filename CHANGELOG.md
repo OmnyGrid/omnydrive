@@ -1,3 +1,18 @@
+## 1.12.3
+
+- Raise the [omnyhub](https://pub.dev/packages/omnyhub) constraint to `^1.5.1`.
+  A maintenance bump only: 1.4.0 and 1.5.0 are on-demand TLS releases (async
+  `DomainPolicy`, `LetsEncryptTls.autoIssue`, `LetsEncryptTls.renewBefore`) and
+  1.5.1 is a dependency bump beneath them. Their changes are confined to the TLS
+  provider, which omnydrive does not use: both servers build their transport with
+  `HttpTransport.http`, and nothing in the package touches `LetsEncryptTls`,
+  `DomainPolicy` or `TlsProvider`. 1.4.0's one breaking change —
+  `LetsEncryptTls.isAllowed` now returning `Future<bool>` — has no caller here.
+  The HTTP surface omnydrive is built on — `OmnyHub`, `HttpTransport`,
+  `HubRequest`/`HubResponse`, `RouterService`, `successEnvelope`/`errorEnvelope`,
+  `mapErrors` — is unchanged, so there is no behaviour change and no API change
+  here.
+
 ## 1.12.2
 
 - Raise the [omnyhub](https://pub.dev/packages/omnyhub) constraint to `^1.3.0`.
