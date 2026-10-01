@@ -244,11 +244,11 @@ void main() {
         )
         .toList();
     expect(perFile, hasLength(3));
-    expect(
-      perFile.map((e) => e.completed).toList(),
-      [1, 2, 3],
-      reason: 'completed should increase by one per file',
-    );
+    expect(perFile.map((e) => e.completed).toList(), [
+      1,
+      2,
+      3,
+    ], reason: 'completed should increase by one per file');
     expect(perFile.last.completed, perFile.last.total);
     expect(events.last.phase, ProgressPhase.done);
 
@@ -308,11 +308,11 @@ void main() {
         )
         .toList();
     expect(perFile, hasLength(3));
-    expect(
-      perFile.map((e) => e.completed).toList(),
-      [1, 2, 3],
-      reason: 'completed should increase by one per file',
-    );
+    expect(perFile.map((e) => e.completed).toList(), [
+      1,
+      2,
+      3,
+    ], reason: 'completed should increase by one per file');
     expect(perFile.last.completed, perFile.last.total);
     expect(events.last.phase, ProgressPhase.done);
 

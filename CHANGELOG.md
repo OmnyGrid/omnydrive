@@ -1,3 +1,19 @@
+## 1.12.4
+
+- **Require [omnyhub](https://pub.dev/packages/omnyhub) `^1.9.2`.** Its
+  transport no longer sends `dart:io`'s default `Content-Type: text/plain` on
+  `204 No Content` and `304 Not Modified` responses (dart-lang/sdk#64442). The
+  hub and the endpoint content server serve through omnyhub's `HttpTransport`,
+  so their `204`/`304`s were labelled `text/plain`, and a cache in front of
+  them could merge that type from a `304` into a stored response.
+  - Releases 1.6–1.9.1 in between are additive (CORS, SSE, typed registration
+    errors, forwarding headers, the HTTP stream parser, cache and relay) plus
+    cache fixes. omnydrive uses none of the changed APIs.
+- **Fixed `GET /version` and the CLI banner reporting `1.9.0`.** The
+  `omnyDriveVersion` constant had not been bumped since 1.9.0. It now matches
+  the package version, and a new test pins it to `pubspec.yaml` so it can't
+  drift again.
+
 ## 1.12.3
 
 - Raise the [omnyhub](https://pub.dev/packages/omnyhub) constraint to `^1.5.1`.
