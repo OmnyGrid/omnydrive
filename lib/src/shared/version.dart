@@ -1,7 +1,7 @@
 /// The OmnyDrive package version, surfaced by the `GET /version` endpoint of
-/// both the hub and the endpoint content server. Keep in sync with
-/// `pubspec.yaml`.
-const String omnyDriveVersion = '1.9.0';
+/// both the hub and the endpoint content server, and by the CLI banner. Kept in
+/// sync with `pubspec.yaml` by `test/unit/shared/version_test.dart`.
+const String omnyDriveVersion = '1.12.4';
 
 /// Capability token advertised in the content server's `GET /version`
 /// `capabilities` list when it can perform a verified server-side copy
